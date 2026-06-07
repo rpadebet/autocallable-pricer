@@ -64,7 +64,7 @@ The app uses **pre-collected static snapshots** of SPX options chains (in `sampl
 ## Run Locally
 
 ```bash
-git clone https://github.com/rohitpittu/autocallable-pricer.git
+git clone https://github.com/rpadebet/autocallable-pricer.git
 cd autocallable-pricer
 pip install -r requirements.txt
 streamlit run app/Home.py
@@ -86,7 +86,8 @@ autocallable-pricer/
 │   │   ├── 01_Vol_Surface.py      # Heston calibration + Dupire
 │   │   ├── 02_Pricer.py           # Three pricing methods + path animation
 │   │   ├── 03_FDM_Visualization.py
-│   │   └── 04_Greeks.py           # Stable vs noisy differentiation
+│   │   ├── 04_Greeks.py           # Stable vs noisy differentiation
+│   │   └── 05_Scenarios.py        # Payoff diagrams, what-if, value surface
 │   ├── components/
 │   │   ├── sidebar.py             # Shared assumptions sidebar
 │   │   └── securities.py          # Pre-configured product definitions

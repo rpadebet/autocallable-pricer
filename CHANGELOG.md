@@ -4,6 +4,23 @@ All notable changes to the AutoCallable Analytics Platform are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 Versioning follows [Semantic Versioning](https://semver.org/): patch (0.0.X) for bug fixes, minor (0.X.0) for new features, major (X.0.0) for architecture changes.
 
+## [0.3.2] — 2026-06-06
+
+### Added
+- **`app/pages/05_Scenarios.py`**: Scenarios page — payoff intuition and what-if analysis.
+  - **Tab 1 — Payoff Diagram**: Full maturity payoff curve across spot levels with three regimes shaded (loss zone, protected zone, called zone). Barrier overlays and regime text explain what each zone means in plain language.
+  - **Tab 2 — What-If Analysis**: Interactive sliders for spot, vol, and rate. Reprices using Standard MC (N=3,000) on click. Displays base price vs what-if price with dollar and percent change.
+  - **Tab 3 — Call Probability**: Bar chart of conditional call probability at each observation date + cumulative call probability curve. Table with survival probability column. Expected life calculation.
+  - **Tab 4 — Value Surface**: Heatmap of price vs spot level × implied vol. Each cell is an independent MC run (N=1,000). Progress bar during computation. Color scale (red→green) makes price gradient immediately visible.
+
+### Fixed
+- **`README.md`**: Corrected GitHub clone URL from `rohitpittu/autocallable-pricer` to `rpadebet/autocallable-pricer`. Added `05_Scenarios.py` to project structure tree.
+
+### Test Results
+**66 / 66 PASSED** — confirmed after Scenarios page addition (no new tests required; page uses existing modules).
+
+---
+
 ## [0.3.1] — 2026-06-06
 
 ### Added
