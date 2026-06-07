@@ -2,7 +2,7 @@
 
 A pricing and analytics platform for autocallable structured products, built as a technical demonstration.
 
-**Live demo**: [https://autocallable-pricer.streamlit.app](https://autocallable-pricer.streamlit.app) *(link active after deploy)*
+**Live demo**: [https://autocallable-pricer-nk7zy5ayx9amw77jrnxkau.streamlit.app](https://autocallable-pricer-nk7zy5ayx9amw77jrnxkau.streamlit.app)
 
 ---
 
