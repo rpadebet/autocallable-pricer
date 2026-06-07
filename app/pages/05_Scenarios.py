@@ -411,4 +411,16 @@ with tab4:
             fig.update_layout(
                 xaxis_title="Spot / S_ref",
                 yaxis_title="Implied Vol (σ)",
-                title=f"Value Surface
+                title=f"Value Surface — {ac.name}",
+                height=460,
+                margin=dict(t=60, b=40),
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+    else:
+        with col1:
+            st.info("Click **▶ Compute Surface** to generate the price heatmap.")
+            st.caption(
+                "Each cell is an independent MC run (N=1,000 paths). "
+                "Expect ~30 seconds for a 7×6 grid on Streamlit Cloud."
+            )
