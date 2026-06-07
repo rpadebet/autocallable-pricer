@@ -25,7 +25,7 @@ import pytest
 import numpy as np
 from app.autocallable import from_security_dict
 from app.components.securities import get_security
-from app.pde_pricer import FDPricer, continuous_autocall_closedform
+from app.pde_pricer import FDPricer, continuous_autocall_closedform, thomas_solve
 
 
 # ---------------------------------------------------------------------------
@@ -230,3 +230,89 @@ def test_all_securities_fd_price(name):
     res = fd.price()
     assert np.isfinite(res.price), f"{name}: FD price not finite: {res.price}"
     assert res.price > 0, f"{name}: FD price non-positive: {res.price}"
+
+
+# ---------------------------------------------------------------------------
+# Tests for Feature B: Crank-Nicolson + Thomas Algorithm
+# ---------------------------------------------------------------------------
+
+def test_thomas_solve_correctness():
+    """Thomas algorithm must match numpy.linalg.solve for a known tridiagonal system."""
+    # Build a known 5x5 tridiagonal system and verify against dense solver (ground truth)
+    n = 5
+    a = np.array([0.0, -1.0, -1.0, -1.0, -1.0])   # sub-diagonal (a[0] unused)
+    b = np.array([4.0,  4.0,  4.0,  4.0,  4.0])    # main diagonal
+    c = np.array([-1.0, -1.0, -1.0, -1.0, 0.0])    # super-diagonal (c[-1] unused)
+    d = np.array([1.0, 2.0, 3.0, 2.0, 1.0])         # RHS
+
+    # Dense solve via numpy (O(n^3) -- ground truth)
+    A_dense = np.diag(b) + np.diag(a[1:], -1) + np.diag(c[:-1], 1)
+    x_ref = np.linalg.solve(A_dense, d)
+
+    # Thomas solve (O(n))
+    x_thomas = thomas_solve(a, b, c, d)
+
+    np.testing.assert_allclose(
+        x_thomas, x_ref, atol=1e-10,
+        err_msg="Thomas algorithm disagrees with numpy.linalg.solve"
+    )
+
+
+def test_cn_matches_explicit_fine_grid(phoenix_ac):
+    """At fine grid resolution, CN and explicit prices should agree within $0.50.
+
+    WHY: Both schemes converge to the same true price. At fine grids the
+    discretization errors (O(dtau) for explicit, O(dtau^2) for CN) are both
+    small, so the two prices should be close.
+    """
+    fd_explicit = FDPricer(phoenix_ac, sigma=SIGMA, r=R, q=Q,
+                           N_x=200, N_tau=200, scheme="explicit")
+    fd_cn = FDPricer(phoenix_ac, sigma=SIGMA, r=R, q=Q,
+                     N_x=200, N_tau=200, scheme="crank_nicolson")
+
+    price_explicit = fd_explicit.price().price
+    price_cn = fd_cn.price().price
+
+    diff = abs(price_explicit - price_cn)
+    assert diff < 0.50, (
+        f"Explicit (${price_explicit:.2f}) and CN (${price_cn:.2f}) "
+        f"differ by ${diff:.2f} at N=200 -- expected < $0.50"
+    )
+
+
+def test_cn_unconditionally_stable(phoenix_ac):
+    """CN must produce a valid price even when Courant number is far above 0.5.
+
+    WHY: The explicit scheme requires Courant number rho = dtau/dx^2 <= 0.5.
+    The FDPricer auto-corrects N_tau to satisfy this for explicit. CN is
+    unconditionally stable -- no such constraint. This test confirms:
+      1. At the same requested N_tau, explicit auto-corrects to many more steps.
+      2. CN uses the requested (large-dtau) step count and remains stable.
+    This is CN's key practical advantage: fewer solver calls at the same spatial grid.
+    """
+    # N_x=200 gives dx^2=0.00123; N_tau=5 gives dtau=0.008 -> Courant=6.5 >> 0.5
+    fd_cn = FDPricer(phoenix_ac, sigma=SIGMA, r=R, q=Q,
+                     N_x=200, N_tau=5, scheme="crank_nicolson")
+    fd_exp = FDPricer(phoenix_ac, sigma=SIGMA, r=R, q=Q,
+                      N_x=200, N_tau=5, scheme="explicit")
+
+    # Confirm CN runs at high Courant without auto-correction
+    assert fd_cn.courant > 0.5, (
+        f"Expected Courant > 0.5 to test unconditional stability, got {fd_cn.courant:.3f}"
+    )
+    # Confirm explicit auto-corrected to more steps (it cannot tolerate Courant > 0.5)
+    assert fd_exp.N_tau > 5, (
+        f"Expected explicit to auto-correct N_tau beyond 5, got {fd_exp.N_tau}"
+    )
+    assert fd_cn.N_tau == 5, (
+        f"CN should NOT auto-correct N_tau; expected 5, got {fd_cn.N_tau}"
+    )
+
+    # CN price must be finite and positive despite the coarse time grid
+    res = fd_cn.price()
+    assert np.isfinite(res.price), (
+        f"CN price is not finite at Courant={fd_cn.courant:.2f}: {res.price}"
+    )
+    assert 0 < res.price < phoenix_ac.notional * 1.5, (
+        f"CN price ${res.price:.2f} is unreasonable at Courant={fd_cn.courant:.2f}"
+    )

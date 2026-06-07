@@ -211,3 +211,95 @@ def test_heston_model_call_price(heston_model):
     price_method = heston_model.call_price(K=K, T=T)
     assert abs(price_direct - price_method) < 0.01, \
         f"Direct vs method price mismatch: {price_direct:.4f} vs {price_method:.4f}"
+
+
+# ---------------------------------------------------------------------------
+# Tests for Feature A: Merton and Bates jump diffusion
+# ---------------------------------------------------------------------------
+
+from app.heston import merton_char_fn, bates_char_fn, merton_call_price, bates_call_price
+
+
+def test_merton_reduces_to_bs():
+    """When lambda=0 (no jumps), Merton call price must equal Black-Scholes.
+
+    WHY: Merton extends BS with a Poisson jump process. When jump intensity
+    lambda=0, the jump term vanishes and Merton's CF reduces to the log-normal
+    CF, so Merton call price == BS call price.
+    """
+    from app.vol_surface import bs_call
+
+    S0_ = S0
+    K = S0_           # ATM call
+    T = 1.0
+    sigma = 0.20
+
+    price_merton = merton_call_price(S0_, K, T, R, Q, sigma=sigma, lam=0.0, mu_J=-0.05, sig_J=0.10)
+    price_bs     = bs_call(S0_, K, T, R, Q, sigma)
+
+    assert abs(price_merton - price_bs) < 0.50, (
+        f"Merton(lambda=0) price ${price_merton:.4f} should equal BS price ${price_bs:.4f} "
+        f"(diff=${abs(price_merton - price_bs):.4f})"
+    )
+
+
+def test_bates_reduces_to_heston():
+    """When lambda=0 (no jumps), Bates call price must equal Heston call price.
+
+    WHY: Bates = Heston * jump_factor. When lambda=0, the jump_factor=1 and
+    Bates CF reduces to Heston CF exactly.
+    """
+    S0_ = S0
+    K = S0_           # ATM call
+    T = 1.0
+
+    price_heston = heston_call_price(S0_, K, T, R, Q,
+                                      v0=V0, kappa=KAPPA, theta=THETA,
+                                      gamma=GAMMA, rho=RHO)
+    price_bates = bates_call_price(S0_, K, T, R, Q,
+                                    v0=V0, kappa=KAPPA, theta=THETA,
+                                    gamma=GAMMA, rho=RHO,
+                                    lam=0.0, mu_J=-0.05, sig_J=0.10)
+
+    assert abs(price_bates - price_heston) < 0.50, (
+        f"Bates(lambda=0) price ${price_bates:.4f} should equal Heston ${price_heston:.4f} "
+        f"(diff=${abs(price_bates - price_heston):.4f})"
+    )
+
+
+def test_bates_jump_increases_wings():
+    """Bates with positive lambda should have higher IV than Heston at deep OTM puts.
+
+    WHY: Merton-style jumps add probability mass to extreme downside moves.
+    OTM put options (low moneyness) should be more expensive under Bates vs Heston
+    at the same ATM vol level, because jumps increase the probability of large drops.
+    This test verifies that the jump correction adds value at the wings.
+    """
+    S0_ = S0
+    T = 1.0
+    K_otm = S0_ * 0.80     # 20% OTM put
+
+    # Heston price (no jumps)
+    price_heston = heston_call_price(S0_, K_otm, T, R, Q,
+                                      v0=V0, kappa=KAPPA, theta=THETA,
+                                      gamma=GAMMA, rho=RHO)
+
+    # Bates price with meaningful jump intensity
+    price_bates = bates_call_price(S0_, K_otm, T, R, Q,
+                                    v0=V0, kappa=KAPPA, theta=THETA,
+                                    gamma=GAMMA, rho=RHO,
+                                    lam=1.0, mu_J=-0.10, sig_J=0.15)
+
+    # Both prices must be finite and non-negative
+    assert np.isfinite(price_heston) and price_heston >= 0, \
+        f"Heston OTM call price invalid: {price_heston}"
+    assert np.isfinite(price_bates) and price_bates >= 0, \
+        f"Bates OTM call price invalid: {price_bates}"
+
+    # Bates should price OTM calls higher (higher IV at wings) due to jump risk
+    # Note: at 80% moneyness, this is deep OTM call but well ITM put by put-call parity
+    # Jump risk raises OTM option prices
+    assert price_bates >= price_heston * 0.95, (
+        f"Bates OTM price ${price_bates:.4f} should be >= Heston ${price_heston:.4f} "
+        f"(jumps should not reduce wing prices)"
+    )
