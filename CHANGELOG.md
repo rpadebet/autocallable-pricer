@@ -4,6 +4,59 @@ All notable changes to the AutoCallable Analytics Platform are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 Versioning follows [Semantic Versioning](https://semver.org/): patch (0.0.X) for bug fixes, minor (0.X.0) for new features, major (X.0.0) for architecture changes.
 
+## [0.5.0] — 2026-06-07
+
+### Added (Feature D — Vol-Aware Pricers)
+- **`app/mc_standard.py`**: Extended `MCStandardPricer` to support four volatility models via `vol_model=` constructor param:
+  - `"flat"` (default) — existing GBM with constant σ; no behaviour change
+  - `"local"` — Dupire local vol; pre-computes a 40×25 σ(S,t) grid, uses `RegularGridInterpolator` for vectorized lookups during sub-stepped simulation
+  - `"heston"` — Euler-Maruyama CIR variance SDE (full truncation); correlated Brownian motion via Cholesky decomposition
+  - `"bates"` — Heston variance + Poisson jump compound; jump log-return sampled as N(N_jumps·μ_J, N_jumps·σ_J²)
+  - Sub-stepping: non-flat models use `n_steps_per_year=52` (weekly) sub-steps per observation interval for discretisation accuracy
+  - Antithetic variates disabled automatically for non-flat models (paired sampling breaks under stochastic variance)
+- **`app/mc_survival.py`**: Extended `MCSurvivalPricer` to support `"flat"`, `"local"`, `"heston"`, `"bates"`:
+  - Local vol: `dupire_local_vol(S_t/S0, t)` lookup at each observation step
+  - Heston: `_advance_heston_variance()` Euler-Maruyama with sub-steps; conditions on realised v_t for the survival probability formula
+  - Bates: Heston variance + `_jump_survival_correction()` which computes `exp(-λ·Δt·P(jump crosses barrier))`
+- **`app/pde_pricer.py`**: Added `vol_model="local"` path in `FDPricer`:
+  - New `_price_local_vol()` method: direct log-price PDE `∂V/∂τ = (σ²_n/2)·d²V/dx² + (r−q−σ²_n/2)·dV/dx − r·V` with position-dependent σ per grid node
+  - Falls through to existing flat-vol heat-equation solver for `"flat"` and to standard `price()` for `"heston"`/`"bates"` (Heston PDE requires 2D state space — future work)
+- **`tests/test_mc_pricers.py`**: 5 new vol-model tests (total 77/77 passing):
+  - `test_mc_heston_reasonable`: Heston MC price in [$700, $1100]
+  - `test_mc_bates_no_jumps_matches_heston`: Bates(λ=0) == Heston to within $0.01 (same seed, identical paths)
+  - `test_heston_variance_nonneg`: Full truncation holds under high γ=1.0 (no NaN/negative prices)
+  - `test_mc_local_vol_reasonable`: Local vol MC price within $150 of flat vol MC
+  - `test_fdm_local_vol_reasonable`: Local vol FDM price within $200 of flat vol FDM
+- **`app/components/sidebar.py`**: New "③b Volatility Model" section with:
+  - Selectbox: Flat / Local Vol (Dupire) / Heston Stochastic Vol / Bates (Heston + Jumps)
+  - Conditional "Jump Parameters" expander (λ, μ_J, σ_J) shown only when Bates is selected
+  - `vol_model`, `heston_params`, `jump_params` added to returned params dict
+- **`app/pages/02_Pricer.py`**: Vol model integration:
+  - `_build_vol_surface()` helper builds Dupire surface lazily when local vol is selected
+  - `run_pricers()` passes `vol_model`, `heston_params`, `jump_params`, `vol_surface` to all three pricers
+  - FDM falls back to flat when Heston/Bates selected (note shown in metric card header)
+  - Antithetic variates disabled automatically for non-flat models
+  - Vol model label shown in header caption
+
+### Added (Settings Persistence + Change Detection)
+- **`app/components/sidebar.py`**: Sidebar state now persists reliably across page navigation:
+  - Module-level `_cached_load_snapshot()`: moved `@st.cache_data` out of `render_sidebar()` so the same cache is shared across all page scripts (was re-created on every page navigation, defeating the cache)
+  - `_ensure_sidebar_defaults()`: initialises ALL 20 widget keys in `session_state` before any widget is rendered; ensures `key=`-only widgets (no `index=` / `value=` conflict) always have a stored default
+  - `S0` and `r` defaults are now set from market data ONLY on first load; subsequent page navigations preserve user overrides
+  - Removed `index=0` from security selectbox and redundant `index=st.session_state.X` from snapshot selectbox
+- **All 5 app pages**: Settings-changed warning banner:
+  - After `render_sidebar()`, each page computes a fingerprint of key pricing params (security, vol model, S0, r, q, σ, N, seed)
+  - If params changed since last "Run" click, shows `st.warning("Settings have changed — re-run to update results")`
+  - Fingerprint stored per-page in session_state on each "Run All Pricers" / "Run" click
+
+### Fixed
+- **`app/heston.py` `merton_char_fn` line 524**: Missing Itō correction — drift was `r - q - λ·μ̄_J`, should be `r - q - 0.5·σ² - λ·μ̄_J`. Heston CF embeds the `-v/2` Itō term implicitly in its variance factors; Merton (no stochastic variance) must be explicit. Fix reduces pricing error vs Black-Scholes from $2.00 → $0.0001.
+
+### Test Results
+**77 / 77 PASSED** (was 72/72 before this session)
+
+---
+
 ## [0.3.3] — 2026-06-06
 
 ### Fixed
@@ -98,41 +151,4 @@ All truncations were caused by the OneDrive FUSE mount's write-buffering behavio
 - `app/mc_survival.py`: One-step survival MC (Paper 3, Algorithm 1); stdlib `math.erf` for NumPy 2.x compatibility; `_p_survive()` valid at all spot levels including at-barrier. Validated: $967 ± $0.70 at N=2000, 1.93× variance reduction.
 
 **Volatility Models**
-- `app/vol_surface.py`: `VolSurface` class with bicubic spline fit (`RectBivariateSpline`); `dupire_local_vol()` via numerical differentiation of Paper 2 Eq. 2; `calibration_rmse()` for Heston comparison
-- `app/heston.py`: `HestonModel` with `heston_char_fn()` (Eq. 23 ONLY — avoids branch cuts); `heston_call_price()` via Gil-Pelaez Fourier inversion; `calibrate()` via `differential_evolution`
-
-**Streamlit Application**
-- `app/components/sidebar.py`: Shared sidebar with 5 sections (Market Data, Product, Heston, Monte Carlo, FDM/PDE); `render_sidebar()` returns full params dict; Feller condition indicator
-- `app/Home.py`: Landing page with quick price comparison (all 3 methods), call probability bar chart, navigation links to analysis pages
-- `app/pages/01_Vol_Surface.py`: 3D implied vol surface + raw data overlay, Heston calibration + smile overlay, Dupire local vol surface
-- `app/pages/02_Pricer.py`: **MAIN PAGE** — price comparison table, variance reduction summary, MC convergence chart with CI bands, 30-path animation with barrier lines (called/survived coloring), term structure table
-- `app/pages/03_FDM_Visualization.py`: V(S,t) heatmap with barrier overlays, time-slice slider (backward induction animation), Greeks panel (Δ, Γ, Θ)
-
-### Fixed
-- NumPy 2.x compatibility: replaced `np.math.erf` with stdlib `math.erf` throughout `mc_survival.py`
-- FUSE filesystem write caching: used bash `cat >` heredoc for critical file writes on OneDrive mount
-- Survival MC `_p_survive()`: removed erroneous `if s >= barrier: return 0.0` guard that made all paths identical when `call_barrier=1.0` (initial spot exactly at barrier)
-- Streamlit page path resolution: added `sys.path.insert(0, project_root)` guard in all entry files
-
-### Technical Notes
-- All 3 pricers agree within ~$10 at N=2000 paths, consistent with expected statistical error
-- Courant number ≈ 0.118 (well below 0.5 stability limit) at default grid settings
-- Survival MC achieves 1.4–2× variance reduction vs Standard MC at same N
-- App entry point: `streamlit run app/Home.py` from project root
-
----
-
-## [0.1.0] — 2026-06-06
-
-### Added
-- `CLAUDE.md`: Full project specification — architecture, pricing engine spec, UI spec (5 pages + sidebar), data layer spec, algorithm pseudocode (PDE, Heston CF, Dupire, standard MC, survival MC), 7-day sprint plan, test plan, deployment notes
-- `CLAUDE.md`: Development Standards section (mandatory rules for all sessions: documentation, changelog, git discipline, test logging, surgical fixes, scope discipline, session start protocol)
-- `AutoCallable_Technical_Spec.docx`: 9-section engineering specification document — System Overview, Directory Structure, Data Layer Spec, Pricing Engine Spec (6 classes with full method signatures), UI Spec (page by page), Assumptions Parameter Registry (22 params), Test Plan (24 tests across 5 files), Deployment, Known Limitations & Phase 2 roadmap
-- `AutoCallable_Project_Plan.docx`: Phased project plan with 7-phase sprint schedule, risk register, pre-configured securities table, data architecture (3-step collection plan), documentation requirements
-- `CHANGELOG.md`: This file
-
-### Notes
-- Project in planning phase (Phase 0 complete). No application code written yet.
-- All three research papers read and digested: Deng/Mallett/McCann (2011), Haugh (2013), Alm et al. JCF (2013)
-- Data collection strategy finalized: try Jun 6 retroactive via yfinance; live snapshots Mon–Wed Jun 9–11 at 9:45am, 12pm, 3:45pm ET; keep best 3–4 snapshots total
-- Day 1 (Mon Jun 9): historical data check is first task before any code is written
+- `app/vol_surface.py`: `VolSurface` class with bicubic spline fit (`RectBivariateSpline`); `dupire_local_vol()` via numerical diff
