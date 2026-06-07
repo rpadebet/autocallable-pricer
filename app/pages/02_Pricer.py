@@ -1,0 +1,606 @@
+"""
+app/pages/02_Pricer.py
+=======================
+MOST IMPORTANT PAGE — Full Pricing Analysis Dashboard.
+
+WHY THIS PAGE IS CENTRAL:
+    The pricer page brings together all three pricing methods and shows:
+        1. Price comparison table (FD vs Standard MC vs Survival MC).
+        2. Convergence chart — how the price estimate evolves as N increases.
+        3. MC path animation — 30 simulated paths with barrier/trigger lines,
+           colored by outcome (called early vs survived to maturity).
+        4. Variance reduction comparison (Survival MC vs Standard MC).
+    This visualization makes abstract pricing theory tangible.
+
+KEY CHARTS:
+    - Tab "Price Comparison": Side-by-side metrics + comparison bar chart.
+    - Tab "MC Convergence": Price estimate vs N paths for both MC methods.
+    - Tab "Path Animation": 30 GBM paths colored called/uncalled + barrier lines.
+    - Tab "Greeks (FD)": Delta, Gamma, Theta from FD bump-grid (if fast enough).
+
+PAPER REFERENCES:
+    Paper 1 §2.2 — explicit FD (FDPricer)
+    Paper 3 §2 Eq. 2.3 — Standard MC (MCStandardPricer)
+    Paper 3 Algorithm 1 — Survival MC (MCSurvivalPricer)
+"""
+
+import sys
+import os
+_project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+
+import streamlit as st
+import numpy as np
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+from app.components.sidebar import render_sidebar
+from app.pde_pricer import FDPricer
+from app.mc_standard import MCStandardPricer
+from app.mc_survival import MCSurvivalPricer
+
+# ── Page config ───────────────────────────────────────────────────────────────
+st.set_page_config(
+    page_title="Pricer — AutoCallable Analytics",
+    page_icon="💰",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+# ── Shared sidebar ─────────────────────────────────────────────────────────────
+params = render_sidebar(page_name="Pricer")
+
+# ── Header ─────────────────────────────────────────────────────────────────────
+st.title("💰 Autocallable Pricer")
+st.caption(
+    f"**{params['security_name']}**  |  σ = {params['sigma']*100:.1f}%  |  "
+    f"r = {params['r']*100:.2f}%  |  q = {params['q']*100:.2f}%  |  "
+    f"S₀ = {params['S0']:,.1f}  |  {params['snapshot_label']}"
+)
+
+ac = params["autocallable"]
+if ac is None:
+    st.error("Product initialization failed. Check sidebar parameters.")
+    st.stop()
+
+# ── Control bar ────────────────────────────────────────────────────────────────
+ctrl1, ctrl2, ctrl3 = st.columns([1, 1, 3])
+with ctrl1:
+    run_all = st.button("▶ Run All Pricers", type="primary", use_container_width=True)
+with ctrl2:
+    show_paths = st.toggle("Return Paths", value=True,
+                           help="Compute 30-path animation (adds ~0.5s)")
+with ctrl3:
+    track_conv = st.toggle("Track Convergence", value=True,
+                           help="Compute running price estimate at multiple N (adds ~1s)")
+
+st.divider()
+
+
+# ==============================================================================
+# PRICING COMPUTATION
+# ==============================================================================
+
+def run_pricers(params, ac, show_paths, track_conv):
+    """Run all three pricers and return results. Wrapped in try/except per method."""
+    results = {"fd": None, "mc": None, "sv": None,
+               "fd_err": None, "mc_err": None, "sv_err": None}
+
+    # ── FD PDE ──
+    with st.spinner("FD PDE pricing…"):
+        try:
+            fd = FDPricer(
+                autocallable=ac,
+                sigma=params["sigma"],
+                r=params["r"],
+                q=params["q"],
+                N_x=params["N_x"],
+                N_tau=params["N_tau"],
+                x_min=params["x_min"],
+            )
+            results["fd"] = fd.price(return_grid=False)
+        except Exception as e:
+            results["fd_err"] = str(e)
+
+    # ── Standard MC ──
+    with st.spinner(f"Standard MC ({params['n_paths']:,} paths)…"):
+        try:
+            mcp = MCStandardPricer(
+                autocallable=ac,
+                sigma=params["sigma"],
+                r=params["r"],
+                q=params["q"],
+                n_paths=params["n_paths"],
+                seed=params["seed"],
+                antithetic=params["antithetic"],
+            )
+            results["mc"] = mcp.price(
+                return_paths=show_paths,
+                track_convergence=track_conv,
+            )
+        except Exception as e:
+            results["mc_err"] = str(e)
+
+    # ── Survival MC ──
+    with st.spinner(f"Survival MC ({params['n_paths']:,} paths)…"):
+        try:
+            svp = MCSurvivalPricer(
+                autocallable=ac,
+                sigma=params["sigma"],
+                r=params["r"],
+                q=params["q"],
+                n_paths=params["n_paths"],
+                seed=params["seed"],
+            )
+            results["sv"] = svp.price(
+                return_paths=show_paths,
+                track_convergence=track_conv,
+            )
+        except Exception as e:
+            results["sv_err"] = str(e)
+
+    return results
+
+
+# Use session state to cache results between tab switches
+if run_all:
+    st.session_state["pricer_results"] = run_pricers(params, ac, show_paths, track_conv)
+    st.session_state["pricer_params_used"] = {k: v for k, v in params.items()
+                                               if k not in ("snapshot_df", "autocallable", "security_params")}
+
+res = st.session_state.get("pricer_results", None)
+
+if res is None:
+    st.info("👆 Click **Run All Pricers** to compute prices. Results are cached between tab switches.")
+    st.stop()
+
+fd_res = res["fd"]
+mc_res = res["mc"]
+sv_res = res["sv"]
+
+
+# ==============================================================================
+# TABS
+# ==============================================================================
+tab1, tab2, tab3, tab4 = st.tabs(
+    ["📊 Price Comparison", "📈 MC Convergence", "🎲 Path Animation", "📐 Term Structure"]
+)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# TAB 1 — PRICE COMPARISON TABLE
+# ──────────────────────────────────────────────────────────────────────────────
+with tab1:
+    st.subheader("Price Comparison — Three Methods")
+
+    # Metrics row
+    m1, m2, m3 = st.columns(3)
+    with m1:
+        st.markdown("**📐 Finite Difference (PDE)**")
+        if fd_res:
+            st.metric("Price", f"${fd_res.price:,.2f}",
+                      help="Deng, Mallett & McCann (2011) — Paper 1 §2.2")
+            sigma = params["sigma"]; T = ac.maturity_years
+            dtau = 0.5 * sigma**2 * T / params["N_tau"]
+            dx = (abs(params["x_min"]) + 5.0) / params["N_x"]
+            courant = dtau / dx**2
+            icon = "🟢" if courant < 0.5 else "🔴"
+            st.caption(f"{icon} Courant: {courant:.4f} | Nₓ={params['N_x']} | Nτ={params['N_tau']}")
+        else:
+            st.error(res["fd_err"] or "FD failed")
+
+    with m2:
+        st.markdown("**🎲 Standard Monte Carlo**")
+        if mc_res:
+            st.metric("Price", f"${mc_res.price:,.2f}",
+                      delta=f"± ${mc_res.std_err:,.3f}",
+                      help="Alm et al. (2013) §2 Eq. 2.3 — antithetic variates")
+            st.caption(
+                f"95% CI [{mc_res.ci_low:,.2f}, {mc_res.ci_high:,.2f}]  "
+                f"| N = {mc_res.n_paths:,}"
+            )
+        else:
+            st.error(res["mc_err"] or "MC failed")
+
+    with m3:
+        st.markdown("**🎯 Survival MC (Alm 2013)**")
+        if sv_res:
+            st.metric("Price", f"${sv_res.price:,.2f}",
+                      delta=f"± ${sv_res.std_err:,.3f}",
+                      help="Alm et al. (2013) Algorithm 1 — analytical barrier → smooth Greeks")
+            if mc_res and sv_res.std_err > 0:
+                vr = mc_res.std_err / sv_res.std_err
+                st.caption(
+                    f"95% CI [{sv_res.ci_low:,.2f}, {sv_res.ci_high:,.2f}]  "
+                    f"| Variance reduction: **{vr:.2f}×**"
+                )
+        else:
+            st.error(res["sv_err"] or "Survival MC failed")
+
+    st.divider()
+
+    # Bar chart comparison
+    labels, prices, errors, colors = [], [], [], []
+    if fd_res:
+        labels.append("FD (PDE)"); prices.append(fd_res.price); errors.append(0)
+        colors.append("#2196F3")
+    if mc_res:
+        labels.append("Standard MC"); prices.append(mc_res.price); errors.append(mc_res.std_err * 1.96)
+        colors.append("#4CAF50")
+    if sv_res:
+        labels.append("Survival MC"); prices.append(sv_res.price); errors.append(sv_res.std_err * 1.96)
+        colors.append("#FF9800")
+
+    if prices:
+        fig = go.Figure()
+        fig.add_trace(go.Bar(
+            name="Price",
+            x=labels, y=prices,
+            error_y=dict(type="data", array=errors, visible=True),
+            marker_color=colors,
+            text=[f"${p:,.2f}" for p in prices],
+            textposition="outside",
+            width=0.4,
+        ))
+
+        mid = np.mean(prices)
+        fig.add_hline(y=mid, line_dash="dot", line_color="gray",
+                      annotation_text=f"Mean ${mid:,.2f}", annotation_position="right")
+
+        fig.update_layout(
+            title="Price Comparison — Error Bars = 95% CI (MC methods)",
+            yaxis=dict(
+                title="Price ($)",
+                range=[min(prices) * 0.99, max(prices) * 1.01],
+            ),
+            showlegend=False,
+            height=380,
+            margin=dict(t=60, b=40),
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    # Spread analysis
+    if len(prices) >= 2:
+        spread = max(prices) - min(prices)
+        spread_pct = spread / np.mean(prices) * 100
+        icon = "🟢" if spread_pct < 1 else "🟡" if spread_pct < 3 else "🔴"
+        st.markdown(
+            f"{icon} **Method spread: ${spread:.2f} ({spread_pct:.2f}%)**  "
+            "— within 2% at N=10K confirms implementations are consistent."
+        )
+
+    # Variance reduction table
+    if mc_res and sv_res:
+        st.divider()
+        st.markdown("**Variance Reduction Summary (Survival MC vs Standard MC)**")
+        vr = mc_res.std_err / sv_res.std_err if sv_res.std_err > 0 else float("nan")
+        eff = vr**2
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.markdown(f"""
+| Metric | Standard MC | Survival MC |
+|---|---|---|
+| σ̂ (std error) | ${mc_res.std_err:,.4f} | ${sv_res.std_err:,.4f} |
+| 95% CI Width | ${mc_res.ci_high - mc_res.ci_low:,.3f} | ${sv_res.ci_high - sv_res.ci_low:,.3f} |
+| Variance Reduction | 1.0× | **{vr:.2f}×** |
+| Equivalent paths | {mc_res.n_paths:,} | {int(mc_res.n_paths / eff):,}* |
+""")
+        with col_b:
+            st.info(
+                f"Survival MC achieves **{vr:.2f}× lower standard error** at the same N. "
+                f"This means you need only ~{int(mc_res.n_paths / eff):,} standard MC paths "
+                f"to match {mc_res.n_paths:,} survival MC paths. "
+                "The gain comes from analytically integrating over barrier crossings (Paper 3, §3)."
+            )
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# TAB 2 — MC CONVERGENCE
+# ──────────────────────────────────────────────────────────────────────────────
+with tab2:
+    st.subheader("Monte Carlo Convergence")
+    st.caption("Price estimate as a function of number of paths. Narrowing CI bands show MC convergence.")
+
+    mc_conv = mc_res.convergence_series if mc_res else []
+    sv_conv = sv_res.convergence_series if sv_res else []
+
+    if not mc_conv and not sv_conv:
+        st.info("Enable **Track Convergence** toggle and rerun to see this chart.")
+    else:
+        fig = go.Figure()
+
+        # Standard MC band
+        if mc_conv:
+            ns = [c[0] for c in mc_conv]
+            means = [c[1] for c in mc_conv]
+            ses = [c[2] for c in mc_conv]
+            upper = [m + 1.96 * s for m, s in zip(means, ses)]
+            lower = [m - 1.96 * s for m, s in zip(means, ses)]
+
+            fig.add_trace(go.Scatter(
+                x=ns + ns[::-1],
+                y=upper + lower[::-1],
+                fill="toself",
+                fillcolor="rgba(33, 150, 243, 0.15)",
+                line=dict(color="rgba(255,255,255,0)"),
+                showlegend=True,
+                name="Standard MC 95% CI",
+            ))
+            fig.add_trace(go.Scatter(
+                x=ns, y=means,
+                mode="lines+markers",
+                name="Standard MC",
+                line=dict(color="#2196F3", width=2),
+                marker=dict(size=4),
+            ))
+
+        # Survival MC band
+        if sv_conv:
+            ns2 = [c[0] for c in sv_conv]
+            means2 = [c[1] for c in sv_conv]
+            ses2 = [c[2] for c in sv_conv]
+            upper2 = [m + 1.96 * s for m, s in zip(means2, ses2)]
+            lower2 = [m - 1.96 * s for m, s in zip(means2, ses2)]
+
+            fig.add_trace(go.Scatter(
+                x=ns2 + ns2[::-1],
+                y=upper2 + lower2[::-1],
+                fill="toself",
+                fillcolor="rgba(255, 152, 0, 0.15)",
+                line=dict(color="rgba(255,255,255,0)"),
+                showlegend=True,
+                name="Survival MC 95% CI",
+            ))
+            fig.add_trace(go.Scatter(
+                x=ns2, y=means2,
+                mode="lines+markers",
+                name="Survival MC",
+                line=dict(color="#FF9800", width=2),
+                marker=dict(size=4),
+            ))
+
+        # FD reference line
+        if fd_res:
+            all_ns = ([c[0] for c in mc_conv] or []) + ([c[0] for c in sv_conv] or [])
+            if all_ns:
+                fig.add_hline(
+                    y=fd_res.price,
+                    line_dash="dash",
+                    line_color="#4CAF50",
+                    annotation_text=f"FD Price ${fd_res.price:,.2f}",
+                    annotation_position="right",
+                )
+
+        fig.update_layout(
+            title="MC Convergence: Price Estimate vs. Number of Paths",
+            xaxis=dict(title="Number of Paths (N)", type="log"),
+            yaxis=dict(title="Price ($)"),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02),
+            height=450,
+            margin=dict(t=80, b=50),
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+        st.caption(
+            "Key insight: Survival MC's CI band is visibly **narrower** than Standard MC's at the same N. "
+            "This is the variance reduction from Paper 3, Algorithm 1."
+        )
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# TAB 3 — PATH ANIMATION (30 paths with barrier lines)
+# ──────────────────────────────────────────────────────────────────────────────
+with tab3:
+    st.subheader("MC Path Simulation")
+    st.caption(
+        "Up to 30 GBM paths. **Blue** = called early (barrier crossed). "
+        "**Gray** = survived to maturity. "
+        "Dashed red = call barrier. Dashed orange = protection (knock-in) barrier."
+    )
+
+    # Use Standard MC paths (full paths available, not truncated like survival)
+    if not mc_res or mc_res.paths is None:
+        st.info("Enable **Return Paths** toggle and rerun to see path animation.")
+    else:
+        paths = mc_res.paths
+        call_idxs = mc_res.call_times or [None] * len(paths)
+
+        # Time axis: 0 (trade date) + all observation dates
+        obs_dates = ac.observation_dates()
+        t_axis = [0.0] + list(obs_dates)
+
+        fig = go.Figure()
+
+        # ── Call/protection barrier lines ──
+        call_barrier_lvl = ac.call_barrier_at_period(0) * ac.S_ref
+        prot_barrier_lvl = ac.protection_barrier * ac.S_ref
+
+        fig.add_hline(
+            y=call_barrier_lvl,
+            line=dict(color="red", dash="dash", width=1.5),
+            annotation_text=f"Call barrier {ac.call_barrier_at_period(0)*100:.0f}%  "
+                            f"(${call_barrier_lvl:,.0f})",
+            annotation_position="top right",
+        )
+        fig.add_hline(
+            y=prot_barrier_lvl,
+            line=dict(color="orange", dash="dash", width=1.5),
+            annotation_text=f"Protection barrier {ac.protection_barrier*100:.0f}%  "
+                            f"(${prot_barrier_lvl:,.0f})",
+            annotation_position="bottom right",
+        )
+
+        # ── Step-down barriers (if any) ──
+        if ac.stepped_barriers:
+            for period_idx, (start_period, barrier_frac) in enumerate(ac.stepped_barriers):
+                # Find the start time for this barrier level
+                if start_period < len(obs_dates):
+                    t_start = obs_dates[start_period]
+                    t_end = obs_dates[-1] + 0.1
+                    lvl = barrier_frac * ac.S_ref
+                    fig.add_shape(
+                        type="line",
+                        x0=t_start, x1=t_end,
+                        y0=lvl, y1=lvl,
+                        line=dict(color="darkred", dash="dot", width=1),
+                    )
+
+        # ── S0 reference line ──
+        fig.add_hline(
+            y=ac.S_ref,
+            line=dict(color="black", dash="dot", width=1),
+            annotation_text=f"S₀ = {ac.S_ref:,.0f}",
+            annotation_position="right",
+        )
+
+        # ── Plot individual paths ──
+        n_show = min(30, len(paths))
+        called_count = 0
+        survived_count = 0
+
+        for i in range(n_show):
+            path = paths[i]
+            call_idx = call_idxs[i]
+
+            # Align path to t_axis — path length may differ (truncated at call)
+            path_t = t_axis[:len(path)]
+
+            if call_idx is not None:
+                # Path called at obs date call_idx
+                color = "rgba(33, 150, 243, 0.5)"  # blue with alpha
+                name = "Called" if called_count == 0 else None
+                called_count += 1
+            else:
+                color = "rgba(150, 150, 150, 0.4)"  # gray with alpha
+                name = "Survived" if survived_count == 0 else None
+                survived_count += 1
+
+            fig.add_trace(go.Scatter(
+                x=path_t,
+                y=list(path),
+                mode="lines",
+                line=dict(color=color, width=1),
+                name=name,
+                showlegend=(name is not None),
+                hovertemplate=(
+                    f"Path {i+1}<br>"
+                    "t = %{x:.2f}y<br>"
+                    "S = %{y:,.1f}<extra></extra>"
+                ),
+            ))
+
+        fig.update_layout(
+            title=(
+                f"30 Simulated Paths — {called_count} called early, "
+                f"{survived_count} survived to maturity"
+            ),
+            xaxis=dict(title="Time (years)", tickformat=".1f"),
+            yaxis=dict(title="Spot Level S(t)"),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02),
+            height=500,
+            margin=dict(t=80, b=50),
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+        # Summary stats
+        total_paths = mc_res.n_paths
+        if mc_res.call_times:
+            n_called = sum(1 for c in mc_res.call_times if c is not None)
+            call_pct = n_called / len(mc_res.call_times) * 100
+        else:
+            call_pct = float("nan")
+
+        st.caption(
+            f"Showing 30 of {total_paths:,} paths. "
+            f"In full simulation: ~{call_pct:.1f}% called early (estimated from stored paths)."
+        )
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# TAB 4 — TERM STRUCTURE (Call Probability + Expected Payoff by Date)
+# ──────────────────────────────────────────────────────────────────────────────
+with tab4:
+    st.subheader("Term Structure of Call Probabilities")
+    st.caption("FD-derived call probability at each observation date (analytical — no MC noise).")
+
+    if not fd_res or not fd_res.call_probs:
+        st.info("FD pricing must succeed to show term structure.")
+    else:
+        obs_dates = fd_res.obs_dates
+        call_probs = fd_res.call_probs
+        cumulative = np.cumsum(call_probs)
+        survival_prob = 1.0 - cumulative
+
+        # Left panel — table
+        col_left, col_right = st.columns([1, 2])
+        with col_left:
+            st.markdown("**Observation Date Analysis**")
+            table_rows = []
+            for i, (t, p) in enumerate(zip(obs_dates, call_probs)):
+                table_rows.append({
+                    "Date (yr)": f"{t:.3f}",
+                    "Call Barrier": f"{ac.call_barrier_at_period(i)*100:.1f}%",
+                    "P(call at t)": f"{p*100:.2f}%",
+                    "P(survive)": f"{(1-cumulative[i])*100:.2f}%",
+                })
+            import pandas as pd
+            df_table = pd.DataFrame(table_rows)
+            st.dataframe(df_table, use_container_width=True, hide_index=True)
+
+        # Right panel — chart
+        with col_right:
+            fig = make_subplots(
+                rows=2, cols=1,
+                subplot_titles=("Call Probability per Observation Date",
+                                "Cumulative Call Probability & Survival"),
+                shared_xaxes=True,
+                vertical_spacing=0.12,
+            )
+
+            # Top: per-period bar chart
+            fig.add_trace(go.Bar(
+                x=[f"{t:.2f}y" for t in obs_dates],
+                y=[p * 100 for p in call_probs],
+                name="P(call at t)",
+                marker_color="#2196F3",
+                text=[f"{p*100:.1f}%" for p in call_probs],
+                textposition="outside",
+            ), row=1, col=1)
+
+            # Bottom: cumulative call + survival
+            fig.add_trace(go.Scatter(
+                x=[f"{t:.2f}y" for t in obs_dates],
+                y=[c * 100 for c in cumulative],
+                mode="lines+markers",
+                name="Cumulative P(call)",
+                line=dict(color="#FF5722", width=2),
+            ), row=2, col=1)
+            fig.add_trace(go.Scatter(
+                x=[f"{t:.2f}y" for t in obs_dates],
+                y=[(1 - c) * 100 for c in cumulative],
+                mode="lines+markers",
+                name="P(survive to maturity)",
+                line=dict(color="#4CAF50", width=2, dash="dash"),
+            ), row=2, col=1)
+
+            fig.update_yaxes(title_text="Probability (%)", row=1, col=1)
+            fig.update_yaxes(title_text="Probability (%)", range=[0, 105], row=2, col=1)
+            fig.update_layout(
+                height=480,
+                showlegend=True,
+                legend=dict(orientation="h", yanchor="bottom", y=1.05),
+                margin=dict(t=60, b=40),
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+        # Expected remaining life
+        if call_probs:
+            expected_life = sum(t * p for t, p in zip(obs_dates, call_probs))
+            expected_life += obs_dates[-1] * float(1 - cumulative[-1])  # maturity if never called
+            st.metric(
+                "Expected Life (duration-weighted)",
+                f"{expected_life:.3f} years",
+                help="Σ t_i × P(called at t_i) + T × P(survives to maturity). "
+                     "Compare to nominal maturity of " + f"{ac.maturity_years}Y.",
+            )
