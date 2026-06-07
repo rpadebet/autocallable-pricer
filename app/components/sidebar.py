@@ -114,7 +114,7 @@ def _ensure_sidebar_defaults(snaps: list, pre_built: list) -> None:
         "sig_j":               0.10,
         # ⑤ Monte Carlo
         "n_paths":             10_000,
-        "n_steps":             252,
+        "n_steps":             250,
         "seed":                42,
         "antithetic":          True,
         # ⑥ FDM
@@ -325,36 +325,69 @@ def render_sidebar(page_name: str = "") -> dict:
 
                 # All widgets below: NO value= — reads from session_state pre-set above
                 use_calibrated = st.toggle(
-                    "Use calibrated values",
+                    "Use calibrated values (from Vol Surface page)",
                     key="use_calibrated_heston",
-                    help="Calibrate Heston to the snapshot vol surface (~10s).",
+                    help="Pulls calibrated parameters set by Vol Surface → Tab 2 → Calibrate Heston.",
                 )
+
+                # If toggle is ON: inject calibrated values into slider session_state keys
+                # BEFORE the sliders are rendered. Sliders read exclusively from session_state,
+                # so setting the keys here causes them to display the calibrated values.
+                _cal = st.session_state.get("heston_cal")
+                _sliders_locked = False
+                if use_calibrated:
+                    if _cal:
+                        # Clamp each param to its slider's min/max before injecting
+                        st.session_state["v0"]    = float(min(max(_cal.get("v0",    0.04), 0.001), 0.30))
+                        st.session_state["kappa"] = float(min(max(_cal.get("kappa", 1.5),  0.1),  10.0))
+                        st.session_state["theta"] = float(min(max(_cal.get("theta", 0.04), 0.001), 0.30))
+                        st.session_state["gamma"] = float(min(max(_cal.get("gamma", 0.30), 0.05),  1.5))
+                        st.session_state["rho"]   = float(min(max(_cal.get("rho",  -0.70), -0.99), -0.01))
+                        _sliders_locked = True
+                        st.success(
+                            f"✅ Calibrated values active — "
+                            f"RMSE {_cal.get('rmse_vol_pts', 0.0):.1f} vol-pts  "
+                            f"({_cal.get('n_quotes', '?')} quotes fitted)"
+                        )
+                    else:
+                        # No calibration in session — guide user to run it
+                        st.warning(
+                            "⚠️ No calibration found. "
+                            "Go to **Vol Surface → Tab 2** and click **Calibrate Heston** first.",
+                            icon="📈",
+                        )
+
                 v0 = st.slider(
                     "v₀ (initial variance)",
                     min_value=0.001, max_value=0.30, step=0.001, format="%.3f",
                     key="v0",
+                    disabled=_sliders_locked,
                     help="√v₀ = current instantaneous vol. v₀=0.04 → 20% vol.",
                 )
                 kappa = st.slider(
                     "κ (mean reversion speed)",
                     min_value=0.1, max_value=10.0, step=0.1, format="%.1f",
                     key="kappa",
+                    disabled=_sliders_locked,
                 )
                 theta = st.slider(
                     "θ (long-run variance)",
                     min_value=0.001, max_value=0.30, step=0.001, format="%.3f",
                     key="theta",
+                    disabled=_sliders_locked,
                     help="√θ = long-run vol. θ=0.04 → 20%.",
                 )
                 gamma = st.slider(
                     "γ (vol-of-vol)",
                     min_value=0.05, max_value=1.5, step=0.01, format="%.2f",
                     key="gamma",
+                    disabled=_sliders_locked,
                 )
                 rho = st.slider(
                     "ρ (spot-vol correlation)",
                     min_value=-0.99, max_value=-0.01, step=0.01, format="%.2f",
                     key="rho",
+                    disabled=_sliders_locked,
                     help="Negative for equities: falling market → rising vol.",
                 )
                 feller = kappa * theta > 0.5 * gamma ** 2

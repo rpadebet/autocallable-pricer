@@ -4,6 +4,39 @@ All notable changes to the AutoCallable Analytics Platform are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 Versioning follows [Semantic Versioning](https://semver.org/): patch (0.0.X) for bug fixes, minor (0.X.0) for new features, major (X.0.0) for architecture changes.
 
+## [0.5.5] — 2026-06-07
+
+### Fixed
+- **`app/components/sidebar.py`** — `use_calibrated_heston` toggle was a no-op (cosmetic only).
+  Now actually injects calibrated params from `session_state["heston_cal"]` into the slider
+  session_state keys (`v0`, `kappa`, `theta`, `gamma`, `rho`) *before* sliders render, so the
+  calibrated values are displayed and used immediately. Each value is clamped to the slider's
+  `[min, max]` before injection to prevent Streamlit's out-of-range reset. Sliders are locked
+  with `disabled=True` while calibrated values are active so the user can't accidentally override them.
+  Added ✅ success caption showing RMSE and quote count when calibrated; ⚠️ warning when toggle is ON
+  but no calibration has been run yet.
+- **`app/pages/02_Pricer.py`** — FDM column label `(flat* vol)` was cryptic and alarming.
+  Replaced with clear, context-sensitive labels:
+  - Heston/Bates selected → orange `(flat σ — stoch-vol PDE not implemented)`
+  - Local vol selected → `(Dupire local vol)` (correctly implemented)
+  - Flat σ → `(flat σ)` (unambiguous)
+
+### Added
+- **`app/pages/02_Pricer.py`** — Calibration status banner at the top of the page (visible only when
+  Heston or Bates vol model is selected):
+  - ✅ **green** if `session_state["heston_cal"]` exists — shows RMSE, quote count, v₀, κ, ρ
+  - ℹ️ **blue info** if no calibration found — explains how to run it (Vol Surface → Tab 2 → Calibrate Heston) and how to activate it (sidebar toggle)
+- **`app/pages/02_Pricer.py`** — Vol-mismatch explanation banner (⚠️ info box) before the three
+  pricing metric columns when Heston/Bates is selected. Explains that FDM uses flat σ (stoch-vol
+  PDE not implemented), MC pricers use full stochastic-vol dynamics, and any price gap is the
+  vol-model premium — so users aren't confused by systematically different FDM vs MC prices.
+- **`scripts/benchmark_calibration.py`** — Standalone speed benchmark: imports `_heston_cf_batch`
+  and `_bates_cf_batch` to verify vectorized functions are loaded (not stale `.pyc`), then times
+  Heston, Merton, and Bates calibration on a 25-quote synthetic dataset. Prints per-model timing
+  vs target thresholds. Run with `python scripts/benchmark_calibration.py` from project root.
+
+---
+
 ## [0.5.4] — 2026-06-07
 
 ### Fixed

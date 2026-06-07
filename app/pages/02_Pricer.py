@@ -97,6 +97,34 @@ if _last_fp is not None and _last_fp != _current_fp:
         icon="🔄",
     )
 
+# ── Calibration status banner (Heston / Bates only) ───────────────────────────
+# When a stochastic vol model is selected but Heston hasn't been calibrated yet,
+# warn the user so they don't unknowingly price with default (non-market) params.
+_vm_selected = params.get("vol_model", "flat")
+if _vm_selected in ("heston", "bates"):
+    _heston_cal = st.session_state.get("heston_cal")
+    if _heston_cal:
+        st.success(
+            f"✅ **Calibrated Heston params in use** — "
+            f"RMSE {_heston_cal.get('rmse_vol_pts', 0.0):.1f} vol-pts  "
+            f"({_heston_cal.get('n_quotes', '?')} quotes)  |  "
+            f"v₀={_heston_cal.get('v0', 0.04):.4f}  "
+            f"κ={_heston_cal.get('kappa', 1.5):.2f}  "
+            f"ρ={_heston_cal.get('rho', -0.7):.2f}",
+            icon="📈",
+        )
+    else:
+        st.info(
+            f"ℹ️ **Heston not yet calibrated to market.** "
+            f"Using default parameters: "
+            f"v₀={params.get('v0', 0.04):.3f}  κ={params.get('kappa', 1.5):.1f}  "
+            f"θ={params.get('theta', 0.04):.3f}  γ={params.get('gamma', 0.30):.2f}  "
+            f"ρ={params.get('rho', -0.70):.2f}.  "
+            f"For market-fitted parameters, go to **Vol Surface → Tab 2 → Calibrate Heston**, "
+            f"then enable **Use calibrated values** in the sidebar.",
+            icon="📈",
+        )
+
 # ── Control bar ────────────────────────────────────────────────────────────────
 ctrl1, ctrl2, ctrl3 = st.columns([1, 1, 3])
 with ctrl1:
@@ -272,13 +300,31 @@ tab1, tab2, tab3, tab4 = st.tabs(
 with tab1:
     st.subheader("Price Comparison — Three Methods")
 
+    # When stochastic vol is selected, explain why FDM shows a different price.
+    # Heston/Bates FDM requires an extra PDE state dimension for variance — not implemented.
+    _active_vol_model = params.get("vol_model", "flat")
+    if _active_vol_model in ("heston", "bates"):
+        _vol_model_name = "Heston" if _active_vol_model == "heston" else "Bates"
+        st.info(
+            f"ℹ️ **FDM uses flat σ = {params['sigma']*100:.1f}%** regardless of the "
+            f"{_vol_model_name} selection. Pricing a stochastic-vol PDE requires an "
+            f"extra state dimension (one for S, one for v) — not yet implemented. "
+            f"MC pricers below use full {_vol_model_name} dynamics. "
+            f"Any price gap between FDM and MC shows the **vol-model premium**.",
+            icon="⚠️",
+        )
+
     # Metrics row
     m1, m2, m3 = st.columns(3)
     with m1:
         _fd_vol_used = params.get("vol_model", "flat")
         if _fd_vol_used in ("heston", "bates"):
-            _fd_vol_used = "flat*"   # FDM fell back to flat for stoch-vol models
-        st.markdown(f"**📐 Finite Difference (PDE)**  <small>({_fd_vol_used} vol)</small>",
+            _fd_label_html = "<small style='color:orange'>(flat σ — stoch-vol PDE not implemented)</small>"
+        elif _fd_vol_used == "local":
+            _fd_label_html = "<small>(Dupire local vol)</small>"
+        else:
+            _fd_label_html = "<small>(flat σ)</small>"
+        st.markdown(f"**📐 Finite Difference (PDE)**  {_fd_label_html}",
                     unsafe_allow_html=True)
         if fd_res:
             st.metric("Price", f"${fd_res.price:,.2f}",
