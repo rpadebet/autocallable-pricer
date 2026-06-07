@@ -53,8 +53,14 @@ params = render_sidebar(page_name="Pricer")
 
 # ── Header ─────────────────────────────────────────────────────────────────────
 st.title("💰 Autocallable Pricer")
+_vol_label = {
+    "flat":   "Flat σ",
+    "local":  "Local Vol (Dupire)",
+    "heston": "Heston",
+    "bates":  "Bates",
+}.get(params.get("vol_model", "flat"), "Flat σ")
 st.caption(
-    f"**{params['security_name']}**  |  σ = {params['sigma']*100:.1f}%  |  "
+    f"**{params['security_name']}**  |  Vol: {_vol_label}  |  σ = {params['sigma']*100:.1f}%  |  "
     f"r = {params['r']*100:.2f}%  |  q = {params['q']*100:.2f}%  |  "
     f"S₀ = {params['S0']:,.1f}  |  {params['snapshot_label']}"
 )
@@ -63,6 +69,33 @@ ac = params["autocallable"]
 if ac is None:
     st.error("Product initialization failed. Check sidebar parameters.")
     st.stop()
+
+# ── Settings-changed banner ────────────────────────────────────────────────────
+# Compare a hash of key params to what was used in the last calculation.
+# If different, show a warning so the user knows to re-run.
+def _param_fingerprint(p: dict) -> str:
+    """
+    Compact string that changes whenever any pricing-relevant setting changes.
+
+    WHY ONLY THESE KEYS: Security name, vol model, spot, rates, and MC paths are
+    the settings most likely to change between navigations. Hashing all of params
+    would be fragile (snapshot_df is a DataFrame). This set covers 99% of cases.
+    """
+    return "|".join(str(p.get(k)) for k in (
+        "security_name", "vol_model", "S0", "r", "q", "sigma",
+        "n_paths", "seed", "N_x", "N_tau",
+        "v0", "kappa", "theta", "gamma", "rho",
+    ))
+
+_current_fp = _param_fingerprint(params)
+_last_fp = st.session_state.get("pricer_last_run_fp", None)
+
+if _last_fp is not None and _last_fp != _current_fp:
+    st.warning(
+        "⚠️ **Settings have changed since the last calculation.** "
+        "Click **Run All Pricers** to update results with the new parameters.",
+        icon="🔄",
+    )
 
 # ── Control bar ────────────────────────────────────────────────────────────────
 ctrl1, ctrl2, ctrl3 = st.columns([1, 1, 3])
@@ -82,13 +115,62 @@ st.divider()
 # PRICING COMPUTATION
 # ==============================================================================
 
+def _build_vol_surface(params: dict):
+    """
+    Build a VolSurface from the current snapshot, or return None on failure.
+
+    WHY LAZY: Building the surface (bicubic spline fit + Dupire grid) takes ~0.5s.
+    We only do it when the user has selected a vol model that actually needs it.
+
+    Returns: (VolSurface | None, error_message | None)
+    """
+    from app.vol_surface import VolSurface
+    try:
+        snap_df = params["snapshot_df"]
+        vs = VolSurface(snap_df, S0=params["S0"], r=params["r"], q=params.get("q", 0.014))
+        return vs, None
+    except Exception as e:
+        return None, str(e)
+
+
 def run_pricers(params, ac, show_paths, track_conv):
-    """Run all three pricers and return results. Wrapped in try/except per method."""
+    """
+    Run all three pricers and return results. Each method is wrapped in try/except
+    so a single pricer failure does not block the others.
+
+    Vol model routing:
+        "flat"   → all three pricers use constant sigma (fastest)
+        "local"  → MCStandard + FDM use Dupire local vol; Survival MC also uses local
+        "heston" → MCStandard + Survival use Heston CIR variance; FDM falls back to flat
+        "bates"  → MCStandard + Survival use Heston+jumps; FDM falls back to flat
+    FDM local vol is the only FDM vol-aware mode. Heston/Bates FDM is not yet implemented
+    (PDE for stochastic vol requires an extra state dimension — future work).
+    """
     results = {"fd": None, "mc": None, "sv": None,
                "fd_err": None, "mc_err": None, "sv_err": None}
 
+    vol_model     = params.get("vol_model", "flat")
+    heston_params = params.get("heston_params")
+    jump_params   = params.get("jump_params")
+
+    # Build vol surface if local vol is selected (needed by MC and FDM)
+    vol_surface = None
+    if vol_model == "local":
+        with st.spinner("Building Dupire local vol surface from snapshot…"):
+            vol_surface, vs_err = _build_vol_surface(params)
+            if vol_surface is None:
+                st.warning(
+                    f"⚠️ Could not build local vol surface: {vs_err}. "
+                    "Falling back to flat vol for all pricers."
+                )
+                vol_model = "flat"
+
+    # FD only supports flat or local vol (Heston/Bates FDM requires 2D PDE — not yet built).
+    fd_vol_model  = vol_model if vol_model in ("flat", "local") else "flat"
+    fd_vol_note   = " (flat — Heston/Bates PDE not yet implemented)" if vol_model in ("heston", "bates") else ""
+
     # ── FD PDE ──
-    with st.spinner("FD PDE pricing…"):
+    with st.spinner(f"FD PDE pricing{fd_vol_note}…"):
         try:
             fd = FDPricer(
                 autocallable=ac,
@@ -98,13 +180,19 @@ def run_pricers(params, ac, show_paths, track_conv):
                 N_x=params["N_x"],
                 N_tau=params["N_tau"],
                 x_min=params["x_min"],
+                vol_model=fd_vol_model,
+                vol_surface=vol_surface,
             )
             results["fd"] = fd.price(return_grid=False)
         except Exception as e:
             results["fd_err"] = str(e)
 
+    # Antithetic variates only work with flat vol (requires paired normal samples on GBM;
+    # sub-stepped Heston/Bates paths break the pairing assumption).
+    use_antithetic = params["antithetic"] and vol_model == "flat"
+
     # ── Standard MC ──
-    with st.spinner(f"Standard MC ({params['n_paths']:,} paths)…"):
+    with st.spinner(f"Standard MC ({params['n_paths']:,} paths, {vol_model})…"):
         try:
             mcp = MCStandardPricer(
                 autocallable=ac,
@@ -113,7 +201,11 @@ def run_pricers(params, ac, show_paths, track_conv):
                 q=params["q"],
                 n_paths=params["n_paths"],
                 seed=params["seed"],
-                antithetic=params["antithetic"],
+                antithetic=use_antithetic,
+                vol_model=vol_model,
+                vol_surface=vol_surface,
+                heston_params=heston_params,
+                jump_params=jump_params,
             )
             results["mc"] = mcp.price(
                 return_paths=show_paths,
@@ -123,7 +215,7 @@ def run_pricers(params, ac, show_paths, track_conv):
             results["mc_err"] = str(e)
 
     # ── Survival MC ──
-    with st.spinner(f"Survival MC ({params['n_paths']:,} paths)…"):
+    with st.spinner(f"Survival MC ({params['n_paths']:,} paths, {vol_model})…"):
         try:
             svp = MCSurvivalPricer(
                 autocallable=ac,
@@ -132,6 +224,10 @@ def run_pricers(params, ac, show_paths, track_conv):
                 q=params["q"],
                 n_paths=params["n_paths"],
                 seed=params["seed"],
+                vol_model=vol_model,
+                vol_surface=vol_surface,
+                heston_params=heston_params,
+                jump_params=jump_params,
             )
             results["sv"] = svp.price(
                 return_paths=show_paths,
@@ -148,6 +244,8 @@ if run_all:
     st.session_state["pricer_results"] = run_pricers(params, ac, show_paths, track_conv)
     st.session_state["pricer_params_used"] = {k: v for k, v in params.items()
                                                if k not in ("snapshot_df", "autocallable", "security_params")}
+    # Store fingerprint so the "settings changed" banner can detect future changes
+    st.session_state["pricer_last_run_fp"] = _current_fp
 
 res = st.session_state.get("pricer_results", None)
 
@@ -177,7 +275,11 @@ with tab1:
     # Metrics row
     m1, m2, m3 = st.columns(3)
     with m1:
-        st.markdown("**📐 Finite Difference (PDE)**")
+        _fd_vol_used = params.get("vol_model", "flat")
+        if _fd_vol_used in ("heston", "bates"):
+            _fd_vol_used = "flat*"   # FDM fell back to flat for stoch-vol models
+        st.markdown(f"**📐 Finite Difference (PDE)**  <small>({_fd_vol_used} vol)</small>",
+                    unsafe_allow_html=True)
         if fd_res:
             st.metric("Price", f"${fd_res.price:,.2f}",
                       help="Deng, Mallett & McCann (2011) — Paper 1 §2.2")
