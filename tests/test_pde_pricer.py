@@ -316,3 +316,54 @@ def test_cn_unconditionally_stable(phoenix_ac):
     assert 0 < res.price < phoenix_ac.notional * 1.5, (
         f"CN price ${res.price:.2f} is unreasonable at Courant={fd_cn.courant:.2f}"
     )
+
+
+def test_cn_return_grid_valid(phoenix_ac):
+    """CN scheme with return_grid=True must return a well-formed 2D grid.
+
+    WHY: The return_grid path stores V(S,t) snapshots for Page 3 (FDM Visualization).
+    This test confirms the CN dispatch in price() correctly stores grid snapshots —
+    a regression guard since return_grid was originally written for the explicit scheme
+    and the snapshot loop runs inside the same dispatch block as the CN step.
+    """
+    fd = FDPricer(phoenix_ac, sigma=SIGMA, r=R, q=Q,
+                  N_x=80, N_tau=60, scheme="crank_nicolson")
+    res = fd.price(return_grid=True)
+
+    # Grid must be returned (not None)
+    assert res.V_grid is not None, "CN: V_grid should not be None when return_grid=True"
+    assert res.S_axis is not None, "CN: S_axis should not be None"
+    assert res.t_axis is not None, "CN: t_axis should not be None"
+
+    # Shape: rows = spatial grid, cols = time snapshots
+    N_x, n_snaps = res.V_grid.shape
+    assert N_x == 80, f"CN: Expected N_x=80 rows, got {N_x}"
+    assert n_snaps > 0, "CN: Expected at least 1 time snapshot"
+
+    # All values finite and non-negative (CN is unconditionally stable)
+    assert np.all(np.isfinite(res.V_grid)), "CN: V_grid contains NaN or Inf"
+    assert np.all(res.V_grid >= -1.0), "CN: V_grid has significantly negative values"
+
+
+def test_cn_price_digital_autocall():
+    """CN scheme must produce a reasonable price for the Digital Autocall.
+
+    WHY: The Digital Autocall has an unusual payoff structure — a fixed $50 digital
+    coupon at call (not a percentage), and 80% capital-protected terminal condition.
+    This exercises a different branch of the autocall BC logic. We confirm CN handles
+    this product class correctly without producing NaN or out-of-range prices.
+    """
+    params = get_security("Digital Autocall")
+    ac = from_security_dict(params, S_ref=S_REF)
+    fd = FDPricer(ac, sigma=SIGMA, r=R, q=Q, N_x=100, N_tau=80, scheme="crank_nicolson")
+    res = fd.price()
+
+    assert np.isfinite(res.price), f"CN Digital Autocall price not finite: {res.price}"
+    # Digital has 80% capital protection: price must be above 80% of PV(notional)
+    min_pv = 0.80 * ac.notional * np.exp(-R * ac.maturity_years)
+    assert res.price > min_pv * 0.8, (
+        f"CN Digital price ${res.price:.2f} below reasonable floor ${min_pv * 0.8:.2f}"
+    )
+    assert res.price < ac.notional * 1.5, (
+        f"CN Digital price ${res.price:.2f} exceeds upper bound"
+    )
