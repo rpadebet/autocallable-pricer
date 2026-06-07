@@ -37,7 +37,10 @@ The centerpiece. Select from four pre-configured autocallable structures and pri
 - **One-Step Survival MC** — no path ever crosses the barrier stochastically; crossings handled via truncated normal sampling. Convergence chart shows tighter confidence intervals at the same path count.
 
 ### 3 · FDM Visualization
-Makes the finite difference algorithm visible. Heatmap of V(S, t) backward from maturity, 3D value surface with autocall boundary, time-slice animation stepping backward from T → 0.
+Makes the finite difference algorithm visible. Heatmap of V(S, t) backward from maturity, 3D value surface with autocall boundary, time-slice animation stepping backward from T → 0. **Scheme Comparison tab** shows Explicit FD vs Crank-Nicolson side by side: price convergence as grid size increases, stability (CN accepts coarse time steps; explicit auto-corrects via CFL), and per-call timing.
+
+### 6 · Product Builder
+Custom autocallable designer. Define structure type (Phoenix / Step-Down / Digital), set barriers, maturity, coupon, and notional. Live payoff diagram and metrics update instantly. Save the product to the sidebar dropdown to price it immediately with all three methods.
 
 ### 4 · Greeks
 Demonstrates the key practical result of Paper 3. Standard MC Delta is noisy and can change sign across random seeds at small bump sizes. Survival MC Delta is stable across all bump sizes and seeds — because the payoff is a smooth function of S₀ by construction (no path stochastically crosses the barrier). Side-by-side plots at 10 bump sizes × 8 seeds make this impossible to miss.
@@ -85,9 +88,10 @@ autocallable-pricer/
 │   ├── pages/
 │   │   ├── 01_Vol_Surface.py      # Heston calibration + Dupire
 │   │   ├── 02_Pricer.py           # Three pricing methods + path animation
-│   │   ├── 03_FDM_Visualization.py
+│   │   ├── 03_FDM_Visualization.py  # FD grid + Scheme Comparison tab
 │   │   ├── 04_Greeks.py           # Stable vs noisy differentiation
-│   │   └── 05_Scenarios.py        # Payoff diagrams, what-if, value surface
+│   │   ├── 05_Scenarios.py        # Payoff diagrams, what-if, value surface
+│   │   └── 06_Product_Builder.py  # Custom autocallable designer
 │   ├── components/
 │   │   ├── sidebar.py             # Shared assumptions sidebar
 │   │   └── securities.py          # Pre-configured product definitions
@@ -112,7 +116,7 @@ autocallable-pricer/
 python -m pytest tests/ -v
 ```
 
-66 tests covering: FD prices vs Paper 1 Table 1, MC convergence, Heston characteristic function (branch-cut safety), payoff logic for all four product structures, variance reduction proof (Survival MC SE < Standard MC SE at same N).
+79 tests covering: FD prices vs Paper 1 Table 1, MC convergence, Heston characteristic function (branch-cut safety), payoff logic for all four product structures, variance reduction proof (Survival MC SE < Standard MC SE at same N), Crank-Nicolson scheme correctness (Thomas algorithm, unconditional stability, convergence to explicit at fine grids).
 
 ---
 

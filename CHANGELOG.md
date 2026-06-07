@@ -4,6 +4,44 @@ All notable changes to the AutoCallable Analytics Platform are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 Versioning follows [Semantic Versioning](https://semver.org/): patch (0.0.X) for bug fixes, minor (0.X.0) for new features, major (X.0.0) for architecture changes.
 
+## [0.5.7] — 2026-06-07
+
+### Added
+- **`app/pages/03_FDM_Visualization.py`** — New "📊 Scheme Comparison" tab (Task #19):
+  - **Panel 1 — Convergence**: Line chart of autocallable price vs spatial grid size
+    (N_x = 50, 100, 200, 400) for both Explicit FD and Crank-Nicolson. Both lines
+    converge to the same true price as the grid refines. CN arrives at the converged
+    value with fewer time steps due to its O(Δτ²) accuracy vs O(Δτ) for explicit.
+  - **Panel 2 — Stability**: Fixed N_x = 100, vary requested N_tau (5, 10, 20, 50,
+    100, 200). Table shows *actual* N_tau each scheme uses after auto-correction:
+    explicit balloons to satisfy the CFL condition (ρ ≤ 0.5); CN always uses the
+    requested count. Demonstrates CN's unconditional stability vs explicit's CFL
+    requirement in a directly comparable way.
+  - **Panel 3 — Timing**: 3 repeated timing runs at N_x = N_tau = 200 for each
+    scheme. Displays avg ± std ms per pricing call so users can see the per-step
+    overhead tradeoff (Thomas solve vs vectorized array op) in context.
+  - **Methodology expander**: Side-by-side comparison table (stability, accuracy,
+    cost, recommendation) with LaTeX update rules for both schemes. Explains when
+    to prefer each: explicit for education/validation (matches Paper 1), CN for
+    production use (fewer steps at same accuracy, no CFL restriction).
+  - Run button with session-state caching so the tab does not recompute on every
+    Streamlit interaction; results persist until explicitly re-run.
+
+- **`tests/test_pde_pricer.py`** — 2 new Crank-Nicolson tests (total: 79 tests):
+  - `test_cn_return_grid_valid`: Verifies CN scheme with `return_grid=True` returns
+    a well-formed non-None `V_grid` of shape `(N_x, n_snapshots)` with all finite,
+    non-negative values. Guards the grid-snapshot loop inside the CN dispatch path.
+  - `test_cn_price_digital_autocall`: Verifies CN produces a finite, in-range price
+    for the Digital Autocall (fixed $50 coupon, 80% capital-protected terminal
+    condition) — exercises a different autocall BC branch than the Phoenix fixture.
+
+### Test Results
+**79 / 79 PASSED** on Rohit's machine (was 77/77 before this session).
+Sandbox count: 57/59 — 2 pre-existing errors from cloud-only OneDrive file truncations
+(`app/vol_surface.py`, `app/heston.py`) that are complete on the Windows host.
+
+---
+
 ## [0.5.6] — 2026-06-07
 
 ### Fixed
