@@ -290,7 +290,8 @@ with nav1:
     st.markdown("### 📈 Vol Surface")
     st.markdown(
         "3D implied vol surface from snapshot data. "
-        "Heston model calibration. Dupire local vol surface."
+        "Heston model calibration. Dupire local vol surface. "
+        "Model Comparison: Heston vs Merton vs Bates fit quality."
     )
     st.page_link("pages/01_Vol_Surface.py", label="→ Open Vol Surface", icon="📈")
 
@@ -309,6 +310,51 @@ with nav3:
         "time-step slider, and barrier surface overlay."
     )
     st.page_link("pages/03_FDM_Visualization.py", label="→ Open FDM Viz", icon="🔲")
+
+st.divider()
+
+# ── Additional pages row ─────────────────────────────────────────────────────
+nav4, nav5, nav6 = st.columns(3)
+
+with nav4:
+    st.markdown("### 📐 Greeks")
+    st.markdown(
+        "Delta and Vega stability comparison — Standard MC (noisy) "
+        "vs Survival MC (smooth) near autocall barriers."
+    )
+    st.page_link("pages/04_Greeks.py", label="→ Open Greeks", icon="📐")
+
+with nav5:
+    st.markdown("### 🎭 Scenarios")
+    st.markdown(
+        "Payoff diagram, what-if sliders, value surface heatmap, "
+        "and call probability by observation date."
+    )
+    st.page_link("pages/05_Scenarios.py", label="→ Open Scenarios", icon="🎭")
+
+with nav6:
+    st.markdown("### 🔧 Product Builder")
+    st.markdown(
+        "Design a custom autocallable structure with live payoff "
+        "preview. Saved products appear in the sidebar."
+    )
+    st.page_link("pages/06_Product_Builder.py", label="→ Open Builder", icon="🔧")
+
+st.divider()
+
+# ── Concept Guide link ───────────────────────────────────────────────────────
+st.markdown("### 📖 Concept Guide")
+st.markdown(
+    "New to autocallables or any of the models? "
+    "The **Concept Guide** explains every feature in plain English — "
+    "no formulas, just analogies, what to click, and what to look for."
+)
+st.info(
+    "📄 **AutoCallable_Concept_Guide.html** — open this file in any browser "
+    "for a full tutorial covering products, vol models, pricing methods, Greeks, "
+    "and a step-by-step demo walkthrough.",
+    icon="📖",
+)
 
 st.divider()
 

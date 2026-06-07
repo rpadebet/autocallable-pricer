@@ -4,6 +4,24 @@ All notable changes to the AutoCallable Analytics Platform are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 Versioning follows [Semantic Versioning](https://semver.org/): patch (0.0.X) for bug fixes, minor (0.X.0) for new features, major (X.0.0) for architecture changes.
 
+## [0.5.3] — 2026-06-07
+
+### Fixed
+- **`app/components/sidebar.py`** — Spinner fix: `n_steps` default changed from `252` to `250`.
+  Streamlit 1.58 validates that a slider's session_state value is a valid step multiple. `252` is
+  not a multiple of `step=50`, causing `StreamlitAPIException` → infinite spinner with no error shown.
+
+### Added
+- **`app/Home.py`** — Navigation section expanded from 3 to 6 page links:
+  - Row 1 (existing): Vol Surface, Pricer, FDM Viz
+  - Row 2 (new): Greeks, Scenarios, Product Builder — each with a description card
+  - Concept Guide section with an `st.info` pointing users to `AutoCallable_Concept_Guide.html`
+  - Vol Surface page description updated to mention Tab 4 Model Comparison
+- **`AutoCallable_Concept_Guide.html`** — Footer updated: removed all MerQube interview references;
+  changed to generic "A learning and demonstration tool for autocallable structured product pricing"
+
+---
+
 ## [0.5.2] — 2026-06-07
 
 ### Fixed
