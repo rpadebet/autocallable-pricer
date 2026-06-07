@@ -184,6 +184,22 @@ cache_key = f"{params['security_name']}_{S0}_{sigma}_{r}_{q}"
 # ---------------------------------------------------------------------------
 
 st.title("📐 Greeks & Stable Differentiation")
+
+# ── Settings-changed banner ─────────────────────────────────────────────────
+def _param_fingerprint_greeks(p: dict) -> str:
+    return "|".join(str(p.get(k)) for k in (
+        "security_name", "vol_model", "S0", "r", "q", "sigma", "n_paths", "seed",
+    ))
+
+_cur_fp_greeks = _param_fingerprint_greeks(params)
+_last_fp_greeks = st.session_state.get("greeks_last_run_fp", None)
+if _last_fp_greeks is not None and _last_fp_greeks != _cur_fp_greeks:
+    st.warning(
+        "⚠️ **Settings have changed since the last calculation.** "
+        "Re-run the analysis on this page to update results.",
+        icon="🔄",
+    )
+
 st.markdown(
     "**Core insight from Paper 3 (Alm et al. 2013):** "
     "Standard MC gives *noisy* Greeks near barriers. "

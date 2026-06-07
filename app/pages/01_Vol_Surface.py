@@ -50,6 +50,22 @@ params = render_sidebar(page_name="Vol Surface")
 
 # ── Header ─────────────────────────────────────────────────────────────────────
 st.title("📈 Implied Volatility Surface")
+
+# ── Settings-changed banner ─────────────────────────────────────────────────
+def _param_fingerprint_vol_surface(p: dict) -> str:
+    return "|".join(str(p.get(k)) for k in (
+        "security_name", "vol_model", "S0", "r", "q", "sigma", "n_paths", "seed",
+    ))
+
+_cur_fp_vol_surface = _param_fingerprint_vol_surface(params)
+_last_fp_vol_surface = st.session_state.get("vol_surface_last_run_fp", None)
+if _last_fp_vol_surface is not None and _last_fp_vol_surface != _cur_fp_vol_surface:
+    st.warning(
+        "⚠️ **Settings have changed since the last calculation.** "
+        "Re-run the analysis on this page to update results.",
+        icon="🔄",
+    )
+
 st.caption(
     f"Data: **{params['snapshot_label']}**  |  "
     f"S₀ = {params['S0']:,.1f}  |  r = {params['r']*100:.2f}%  |  q = {params['q']*100:.2f}%"

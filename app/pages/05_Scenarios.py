@@ -70,6 +70,22 @@ def quick_price(ac, sigma, r, q, spot=None, n_paths=3000, seed=42):
 # ---------------------------------------------------------------------------
 
 st.title("🎯 Scenarios & Payoff Analysis")
+
+# ── Settings-changed banner ─────────────────────────────────────────────────
+def _param_fingerprint_scenarios(p: dict) -> str:
+    return "|".join(str(p.get(k)) for k in (
+        "security_name", "vol_model", "S0", "r", "q", "sigma", "n_paths", "seed",
+    ))
+
+_cur_fp_scenarios = _param_fingerprint_scenarios(params)
+_last_fp_scenarios = st.session_state.get("scenarios_last_run_fp", None)
+if _last_fp_scenarios is not None and _last_fp_scenarios != _cur_fp_scenarios:
+    st.warning(
+        "⚠️ **Settings have changed since the last calculation.** "
+        "Re-run the analysis on this page to update results.",
+        icon="🔄",
+    )
+
 st.markdown(
     "Understand *what this product actually pays* and how price responds "
     "to changes in market conditions."
@@ -395,10 +411,4 @@ with tab4:
             fig.update_layout(
                 xaxis_title="Spot / S_ref",
                 yaxis_title="Implied Vol (σ)",
-                title=f"Value Surface — {ac.name}",
-                height=420,
-            )
-            st.plotly_chart(fig, use_container_width=True)
-    else:
-        with col1:
-            st.info("Click **▶ Compute Surface** to generate the price heatmap.")
+                title=f"Value Surface
