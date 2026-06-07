@@ -272,9 +272,12 @@ class VolSurface:
         """
         if self._spline is None:
             return 0.17  # Fallback if spline not fitted
-        m_clamp = np.clip(moneyness, self._moneyness_knots[0], self._moneyness_knots[-1])
-        t_clamp = np.clip(ttm, self._ttm_knots[0], self._ttm_knots[-1])
-        iv = float(self._spline(m_clamp, t_clamp))
+        # float() ensures plain Python scalars — np.clip returns a numpy scalar
+        # which RectBivariateSpline treats as a 1-element array, returning shape
+        # (1, 1) rather than a scalar. [0, 0] extracts the single value.
+        m_clamp = float(np.clip(moneyness, self._moneyness_knots[0], self._moneyness_knots[-1]))
+        t_clamp = float(np.clip(ttm, self._ttm_knots[0], self._ttm_knots[-1]))
+        iv = float(self._spline(m_clamp, t_clamp)[0, 0])
         return float(np.clip(iv, 0.02, 1.0))
 
     def surface_grid(
