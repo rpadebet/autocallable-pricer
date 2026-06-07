@@ -35,7 +35,14 @@ from plotly.subplots import make_subplots
 
 from app.components.sidebar import render_sidebar
 from app.vol_surface import VolSurface
-from app.heston import HestonModel
+from app.heston import (
+    HestonModel,
+    calibrate_merton,
+    calibrate_bates,
+    merton_call_price,
+    bates_call_price,
+)
+from app.vol_surface import bs_implied_vol
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -77,13 +84,16 @@ if snap_df is None or snap_df.empty:
     st.stop()
 
 # ── Controls ──────────────────────────────────────────────────────────────────
-c1, c2, c3 = st.columns([1, 1, 2])
+c1, c2, c3, c4 = st.columns([1, 1, 1, 1])
 with c1:
     run_surf = st.button("📊 Build Vol Surface", type="primary", use_container_width=True)
 with c2:
     run_cal = st.button("🔧 Calibrate Heston", use_container_width=True,
                         help="Fits 5 Heston params to snapshot IV data (~15s)")
 with c3:
+    run_all_models = st.button("🔬 Calibrate All Models", use_container_width=True,
+                               help="Calibrate Heston + Merton + Bates and compare fit quality (~45s total)")
+with c4:
     show_dupire = st.toggle("Show Dupire Local Vol", value=False,
                             help="Dupire forward-looking vol derived from implied surface")
 
@@ -121,8 +131,8 @@ if vol_surf is None:
 # 3D SURFACE PLOT
 # ==============================================================================
 
-tab1, tab2, tab3 = st.tabs(
-    ["🌐 3D Implied Vol", "📉 Heston Overlay", "🔵 Dupire Local Vol"]
+tab1, tab2, tab3, tab4 = st.tabs(
+    ["🌐 3D Implied Vol", "📉 Heston Overlay", "🔵 Dupire Local Vol", "📊 Model Comparison"]
 )
 
 with tab1:
@@ -365,3 +375,311 @@ with tab3:
             except Exception as e:
                 st.error(f"Dupire surface error: {e}")
                 st.caption("Dupire differentiation can fail near the boundary of sparse data regions.")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# TAB 4 — MODEL COMPARISON (Heston vs Merton vs Bates)
+# ──────────────────────────────────────────────────────────────────────────────
+with tab4:
+    st.subheader("Model Comparison — Heston vs Merton vs Bates")
+    st.markdown(
+        "Calibrate all three stochastic vol / jump-diffusion models to the same market data "
+        "and compare fit quality. Lower RMSE = better smile fit."
+    )
+    st.caption(
+        "**Heston**: 5 params — κ, θ, γ, ρ, v₀  |  "
+        "**Merton**: 4 params — σ, λ, μ_J, σ_J  |  "
+        "**Bates**: 8 params — Heston + λ, μ_J, σ_J (warm-started from Heston)"
+    )
+
+    # ── Trigger calibration ──────────────────────────────────────────────────
+    if run_all_models:
+        # Step 1: Heston (reuse cache if already done, else run fresh)
+        if "heston_cal" not in st.session_state or st.session_state.get("heston_cal") is None:
+            with st.spinner("Calibrating Heston (~15s)…"):
+                try:
+                    heston_cmp = HestonModel(
+                        S0=params["S0"], r=params["r"], q=params["q"],
+                        v0=params["v0"], kappa=params["kappa"],
+                        theta=params["theta"], gamma=params["gamma"], rho=params["rho"],
+                    )
+                    cal_h = heston_cmp.calibrate(vol_surf, n_sample=80)
+                    st.session_state["heston_cal"] = cal_h
+                    st.session_state["heston_model_cal"] = heston_cmp
+                    st.session_state["heston_cmp_params"] = dict(
+                        v0=heston_cmp.v0, kappa=heston_cmp.kappa,
+                        theta=heston_cmp.theta, gamma=heston_cmp.gamma, rho=heston_cmp.rho,
+                    )
+                except Exception as e:
+                    st.error(f"Heston calibration failed: {e}")
+
+        # Step 2: Merton
+        with st.spinner("Calibrating Merton jump-diffusion (~15s)…"):
+            try:
+                # Build a market_df with moneyness / ttm_years / impliedVolatility
+                mkt_df = snap_df[snap_df["optionType"] == "call"].copy()
+                mkt_df = mkt_df.dropna(subset=["impliedVolatility"])
+                mkt_df = mkt_df[mkt_df["impliedVolatility"] > 0]
+                cal_m = calibrate_merton(mkt_df, S0=params["S0"], r=params["r"], q=params["q"])
+                st.session_state["merton_cal"] = cal_m
+            except Exception as e:
+                st.error(f"Merton calibration failed: {e}")
+                st.session_state["merton_cal"] = None
+
+        # Step 3: Bates (warm-start from Heston)
+        with st.spinner("Calibrating Bates (Heston + Jumps, ~15s)…"):
+            try:
+                heston_init = st.session_state.get("heston_cmp_params") or st.session_state.get("heston_cal")
+                mkt_df = snap_df[snap_df["optionType"] == "call"].copy()
+                mkt_df = mkt_df.dropna(subset=["impliedVolatility"])
+                mkt_df = mkt_df[mkt_df["impliedVolatility"] > 0]
+                cal_b = calibrate_bates(mkt_df, S0=params["S0"], r=params["r"], q=params["q"],
+                                        heston_init=heston_init)
+                st.session_state["bates_cal"] = cal_b
+            except Exception as e:
+                st.error(f"Bates calibration failed: {e}")
+                st.session_state["bates_cal"] = None
+
+        st.session_state["vol_surf_last_run_fp"] = _cur_fp_vol_surface
+        st.success("All models calibrated. Scroll down to see the comparison.")
+
+    # ── Display comparison ───────────────────────────────────────────────────
+    cal_h = st.session_state.get("heston_cal")
+    cal_m = st.session_state.get("merton_cal")
+    cal_b = st.session_state.get("bates_cal")
+
+    if not any([cal_h, cal_m, cal_b]):
+        st.info("👆 Click **Calibrate All Models** to fit Heston, Merton, and Bates to the market surface.")
+        st.stop()
+
+    # ── Fit quality table ────────────────────────────────────────────────────
+    st.subheader("Fit Quality Comparison")
+
+    import pandas as pd
+    rows = []
+    heston_obj = st.session_state.get("heston_model_cal")
+    if cal_h and heston_obj:
+        rows.append({
+            "Model": "Heston",
+            "Parameters": 5,
+            "RMSE (vol pts)": f"{cal_h['rmse']*100:.4f}%",
+            "Key params": (
+                f"v₀={heston_obj.v0:.4f} κ={heston_obj.kappa:.3f} "
+                f"θ={heston_obj.theta:.4f} γ={heston_obj.gamma:.3f} ρ={heston_obj.rho:.3f}"
+            ),
+        })
+    if cal_m:
+        rows.append({
+            "Model": "Merton",
+            "Parameters": 4,
+            "RMSE (vol pts)": f"{cal_m['rmse_vol_pts']:.4f}%",
+            "Key params": (
+                f"σ={cal_m['sigma']:.4f} λ={cal_m['lam']:.3f} "
+                f"μ_J={cal_m['mu_J']:.4f} σ_J={cal_m['sig_J']:.4f}"
+            ),
+        })
+    if cal_b:
+        rows.append({
+            "Model": "Bates",
+            "Parameters": 8,
+            "RMSE (vol pts)": f"{cal_b['rmse_vol_pts']:.4f}%",
+            "Key params": (
+                f"v₀={cal_b['v0']:.4f} λ={cal_b['lam']:.3f} "
+                f"μ_J={cal_b['mu_J']:.4f} σ_J={cal_b['sig_J']:.4f}"
+            ),
+        })
+
+    if rows:
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        st.caption(
+            "RMSE = root-mean-square error in implied vol (vol points). "
+            "Lower is better. Bates typically wins on fit but at the cost of 8 parameters."
+        )
+
+    # ── Smile comparison chart ───────────────────────────────────────────────
+    st.subheader("Implied Vol Smile Comparison")
+    st.caption("Market vs all three models at selected tenors. Dashed = model; solid = market.")
+
+    # Moneyness grid for smile plots
+    m_grid = np.linspace(0.75, 1.25, 40)
+    S0 = params["S0"]
+    r  = params["r"]
+    q  = params["q"]
+
+    # Two representative tenors for comparison
+    tenor_choices = {"3 months (0.25y)": 0.25, "6 months (0.50y)": 0.50,
+                     "1 year (1.0y)": 1.0, "2 years (2.0y)": 2.0}
+    col_t1, col_t2 = st.columns(2)
+    with col_t1:
+        t1_label = st.selectbox("Tenor 1", list(tenor_choices.keys()), index=2, key="cmp_t1")
+    with col_t2:
+        t2_label = st.selectbox("Tenor 2", list(tenor_choices.keys()), index=3, key="cmp_t2")
+    T1 = tenor_choices[t1_label]
+    T2 = tenor_choices[t2_label]
+
+    def _model_smile(model_name: str, m_grid, T: float) -> list:
+        """
+        Compute model implied vols across a moneyness grid at maturity T.
+
+        WHY TRY/EXCEPT PER POINT: Near-boundary strikes can produce invalid prices
+        (negative, very large) that cause bs_implied_vol to return None. We clip
+        to NaN so the chart shows a gap rather than crashing.
+        """
+        ivs = []
+        for m in m_grid:
+            K = m * S0
+            try:
+                if model_name == "heston" and heston_obj:
+                    price = heston_obj.european_call(S0, K, T)
+                elif model_name == "merton" and cal_m:
+                    price = merton_call_price(
+                        S0, K, T, r, q,
+                        cal_m["sigma"], cal_m["lam"], cal_m["mu_J"], cal_m["sig_J"]
+                    )
+                elif model_name == "bates" and cal_b:
+                    price = bates_call_price(
+                        S0, K, T, r, q,
+                        cal_b["v0"], cal_b["kappa"], cal_b["theta"],
+                        cal_b["gamma"], cal_b["rho"],
+                        cal_b["lam"], cal_b["mu_J"], cal_b["sig_J"]
+                    )
+                else:
+                    ivs.append(None)
+                    continue
+                iv = bs_implied_vol(price, S0, K, T, r, q)
+                ivs.append(iv * 100 if iv else None)
+            except Exception:
+                ivs.append(None)
+        return ivs
+
+    def _market_smile(m_grid, T: float, vol_surf) -> list:
+        """Market smile from spline interpolation at given tenor."""
+        return [vol_surf.implied_vol(m, T) * 100 for m in m_grid]
+
+    # Build figure with two subplots (one per tenor)
+    fig = make_subplots(
+        rows=1, cols=2,
+        subplot_titles=[f"Tenor: {t1_label}", f"Tenor: {t2_label}"],
+        shared_yaxes=True,
+    )
+
+    MODEL_COLORS = {"market": "#333333", "heston": "#2196F3", "merton": "#4CAF50", "bates": "#FF9800"}
+    MODEL_DASH   = {"market": "solid",    "heston": "dash",   "merton": "dot",     "bates": "dashdot"}
+
+    for col_idx, T in enumerate([T1, T2], start=1):
+        # Market
+        try:
+            iv_mkt = _market_smile(m_grid, T, vol_surf)
+            fig.add_trace(go.Scatter(
+                x=m_grid, y=iv_mkt, mode="lines",
+                name="Market" if col_idx == 1 else None,
+                showlegend=(col_idx == 1),
+                line=dict(color=MODEL_COLORS["market"], width=2.5, dash="solid"),
+            ), row=1, col=col_idx)
+        except Exception:
+            pass
+
+        # Heston
+        if heston_obj:
+            with st.spinner(f"Computing Heston smile at T={T}y…") if False else st.empty():
+                pass
+            iv_h = _model_smile("heston", m_grid, T)
+            fig.add_trace(go.Scatter(
+                x=m_grid, y=iv_h, mode="lines",
+                name="Heston" if col_idx == 1 else None,
+                showlegend=(col_idx == 1),
+                line=dict(color=MODEL_COLORS["heston"], width=2, dash=MODEL_DASH["heston"]),
+            ), row=1, col=col_idx)
+
+        # Merton
+        if cal_m:
+            iv_m = _model_smile("merton", m_grid, T)
+            fig.add_trace(go.Scatter(
+                x=m_grid, y=iv_m, mode="lines",
+                name="Merton" if col_idx == 1 else None,
+                showlegend=(col_idx == 1),
+                line=dict(color=MODEL_COLORS["merton"], width=2, dash=MODEL_DASH["merton"]),
+            ), row=1, col=col_idx)
+
+        # Bates
+        if cal_b:
+            iv_b = _model_smile("bates", m_grid, T)
+            fig.add_trace(go.Scatter(
+                x=m_grid, y=iv_b, mode="lines",
+                name="Bates" if col_idx == 1 else None,
+                showlegend=(col_idx == 1),
+                line=dict(color=MODEL_COLORS["bates"], width=2, dash=MODEL_DASH["bates"]),
+            ), row=1, col=col_idx)
+
+        fig.update_xaxes(title_text="Moneyness (K/S₀)", row=1, col=col_idx)
+
+    fig.update_yaxes(title_text="Implied Vol (%)", row=1, col=1)
+    fig.update_layout(
+        height=420,
+        legend=dict(orientation="h", yanchor="bottom", y=1.05),
+        margin=dict(t=60, b=50),
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+    # ── Parameter detail tables ──────────────────────────────────────────────
+    with st.expander("📋 Full Calibrated Parameters", expanded=False):
+        col_h, col_m, col_b = st.columns(3)
+
+        with col_h:
+            st.markdown("**Heston**")
+            if heston_obj and cal_h:
+                st.markdown(f"""
+| Param | Value |
+|---|---|
+| v₀ | {heston_obj.v0:.5f} |
+| κ | {heston_obj.kappa:.4f} |
+| θ | {heston_obj.theta:.5f} |
+| γ | {heston_obj.gamma:.4f} |
+| ρ | {heston_obj.rho:.4f} |
+| RMSE | {cal_h['rmse']*100:.4f}% |
+""")
+            else:
+                st.caption("Not yet calibrated")
+
+        with col_m:
+            st.markdown("**Merton**")
+            if cal_m:
+                st.markdown(f"""
+| Param | Value |
+|---|---|
+| σ | {cal_m['sigma']:.4f} |
+| λ | {cal_m['lam']:.4f} |
+| μ_J | {cal_m['mu_J']:.4f} |
+| σ_J | {cal_m['sig_J']:.4f} |
+| RMSE | {cal_m['rmse_vol_pts']:.4f}% |
+""")
+            else:
+                st.caption("Not yet calibrated")
+
+        with col_b:
+            st.markdown("**Bates**")
+            if cal_b:
+                feller_ok = cal_b.get("feller_satisfied", False)
+                st.markdown(f"""
+| Param | Value |
+|---|---|
+| v₀ | {cal_b['v0']:.5f} |
+| κ | {cal_b['kappa']:.4f} |
+| θ | {cal_b['theta']:.5f} |
+| γ | {cal_b['gamma']:.4f} |
+| ρ | {cal_b['rho']:.4f} |
+| λ | {cal_b['lam']:.4f} |
+| μ_J | {cal_b['mu_J']:.4f} |
+| σ_J | {cal_b['sig_J']:.4f} |
+| Feller | {"✅" if feller_ok else "❌"} |
+| RMSE | {cal_b['rmse_vol_pts']:.4f}% |
+""")
+            else:
+                st.caption("Not yet calibrated")
+
+    st.caption(
+        "**Interpretation**: Bates nests both Heston (set λ=0) and Merton (set v₀=const). "
+        "A significantly lower Bates RMSE vs Heston signals that jump risk matters for this market. "
+        "Merton RMSE higher than Heston typically indicates mean-reverting variance is important "
+        "beyond simple Gaussian jump diffusion."
+    )

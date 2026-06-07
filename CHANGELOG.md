@@ -4,6 +4,21 @@ All notable changes to the AutoCallable Analytics Platform are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 Versioning follows [Semantic Versioning](https://semver.org/): patch (0.0.X) for bug fixes, minor (0.X.0) for new features, major (X.0.0) for architecture changes.
 
+## [0.5.1] — 2026-06-07
+
+### Added
+- **`app/pages/01_Vol_Surface.py`** — Tab 4 "📊 Model Comparison" (Task #18):
+  - "🔬 Calibrate All Models" button triggers sequential calibration of Heston, Merton jump-diffusion, and Bates (Heston + jumps)
+  - Fit quality comparison table: Model | Parameters | RMSE (vol pts) | Key params
+  - Implied vol smile comparison chart: Market (solid) vs Heston (dashed) vs Merton (dot) vs Bates (dot-dash) at two user-selected tenors
+  - Tenor selectors: 3m, 6m, 1y, 2y dropdowns for each of the two comparison panels
+  - "📋 Full Calibrated Parameters" expandable table with all calibrated values per model
+  - Calibration results cached in `st.session_state` so navigating away and back does not re-run calibration
+  - Bates warm-started from Heston calibrated params for faster convergence
+  - Imports added: `calibrate_merton`, `calibrate_bates`, `merton_call_price`, `bates_call_price`, `bs_implied_vol`
+  - Control bar expanded from 3 to 4 columns to accommodate the new button
+  - Tab declaration expanded from 3 to 4 tabs
+
 ## [0.5.0] — 2026-06-07
 
 ### Added (Feature D — Vol-Aware Pricers)
