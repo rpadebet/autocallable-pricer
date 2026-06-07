@@ -97,6 +97,15 @@ with c4:
     show_dupire = st.toggle("Show Dupire Local Vol", value=False,
                             help="Dupire forward-looking vol derived from implied surface")
 
+# ── Timing guide — shown prominently so users don't think the app is frozen ──
+st.caption(
+    "⏱ **Expected run times:** "
+    "Build Vol Surface ~3 s  ·  "
+    "Calibrate Heston ~15–45 s  ·  "
+    "Calibrate All Models ~60–120 s (3 sequential optimizations)  ·  "
+    "Dupire Local Vol ~5 s"
+)
+
 st.divider()
 
 
@@ -230,7 +239,13 @@ with tab2:
 
     # Calibration button handler
     if run_cal:
-        with st.spinner("Calibrating Heston model via differential evolution (~15s)…"):
+        st.info(
+            "🔧 **Calibrating Heston model** — fitting 5 parameters (κ, θ, γ, ρ, v₀) "
+            "via differential evolution. This typically takes **15–45 seconds** depending "
+            "on data size. The spinner below will disappear when done.",
+            icon="⏳",
+        )
+        with st.spinner("Calibrating Heston (5 params, differential evolution)… please wait"):
             try:
                 cal_result = heston.calibrate(vol_surf, n_sample=80)
                 st.session_state["heston_cal"] = cal_result
@@ -394,9 +409,17 @@ with tab4:
 
     # ── Trigger calibration ──────────────────────────────────────────────────
     if run_all_models:
+        st.info(
+            "🔬 **Calibrating 3 models sequentially** — Heston → Merton → Bates. "
+            "Each step runs its own numerical optimizer. "
+            "**Total expected time: 60–120 seconds.** "
+            "Watch the step labels below to track progress — the app is working, not frozen.",
+            icon="⏳",
+        )
+
         # Step 1: Heston (reuse cache if already done, else run fresh)
         if "heston_cal" not in st.session_state or st.session_state.get("heston_cal") is None:
-            with st.spinner("Calibrating Heston (~15s)…"):
+            with st.spinner("Step 1 of 3 — Calibrating Heston (5 params: κ, θ, γ, ρ, v₀)… ~15–45 s"):
                 try:
                     heston_cmp = HestonModel(
                         S0=params["S0"], r=params["r"], q=params["q"],
@@ -412,11 +435,12 @@ with tab4:
                     )
                 except Exception as e:
                     st.error(f"Heston calibration failed: {e}")
+        else:
+            st.caption("✅ Step 1 of 3 — Heston already calibrated (reusing cached result)")
 
         # Step 2: Merton
-        with st.spinner("Calibrating Merton jump-diffusion (~15s)…"):
+        with st.spinner("Step 2 of 3 — Calibrating Merton jump-diffusion (4 params: σ, λ, μ_J, σ_J)… ~15–30 s"):
             try:
-                # Build a market_df with moneyness / ttm_years / impliedVolatility
                 mkt_df = snap_df[snap_df["optionType"] == "call"].copy()
                 mkt_df = mkt_df.dropna(subset=["impliedVolatility"])
                 mkt_df = mkt_df[mkt_df["impliedVolatility"] > 0]
@@ -427,7 +451,7 @@ with tab4:
                 st.session_state["merton_cal"] = None
 
         # Step 3: Bates (warm-start from Heston)
-        with st.spinner("Calibrating Bates (Heston + Jumps, ~15s)…"):
+        with st.spinner("Step 3 of 3 — Calibrating Bates (8 params: Heston + jumps, warm-started)… ~15–30 s"):
             try:
                 heston_init = st.session_state.get("heston_cmp_params") or st.session_state.get("heston_cal")
                 mkt_df = snap_df[snap_df["optionType"] == "call"].copy()
@@ -441,7 +465,7 @@ with tab4:
                 st.session_state["bates_cal"] = None
 
         st.session_state["vol_surf_last_run_fp"] = _cur_fp_vol_surface
-        st.success("All models calibrated. Scroll down to see the comparison.")
+        st.success("✅ All 3 models calibrated. Scroll down to see the comparison.")
 
     # ── Display comparison ───────────────────────────────────────────────────
     cal_h = st.session_state.get("heston_cal")

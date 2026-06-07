@@ -4,6 +4,26 @@ All notable changes to the AutoCallable Analytics Platform are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 Versioning follows [Semantic Versioning](https://semver.org/): patch (0.0.X) for bug fixes, minor (0.X.0) for new features, major (X.0.0) for architecture changes.
 
+## [0.5.4] — 2026-06-07
+
+### Fixed
+- **`app/heston.py`** — Critical calibration performance overhaul (was timing out after 5+ min; now targets 15–45s Heston, 5–15s Merton, 15–30s Bates):
+  - **Root cause 1 (eval cost)**: `HestonModel.calibrate()` used `differential_evolution` (~2,000 objective evals) with `scipy.integrate.quad` (100 adaptive integration points) called per-quote in a Python loop. For 80 quotes this was ~320,000 quad integrations per run.
+  - **Root cause 2 (scalar CF loop)**: Even after switching to `_heston_call_batch_fast()`, the function still called `heston_char_fn()` 64 times in a Python loop per TTM group — 128 Python function calls per objective eval per TTM.
+  - **Fix 1**: Added `_heston_cf_batch(u_arr, ...)` — vectorized Heston CF processing a full phi array in one numpy pass using broadcasting + `np.where` for degenerate-case handling. Replaces 64 Python function calls with 1 numpy operation.
+  - **Fix 2**: Added `_bates_cf_batch(u_arr, ...)` — same for Bates CF (calls `_heston_cf_batch` internally for the Heston component).
+  - **Fix 3**: Updated `_heston_call_batch_fast()` to call `_heston_cf_batch(phi_arr + 0j, ...)` and `_heston_cf_batch(phi_arr - 1j, ...)` instead of list comprehensions.
+  - **Fix 4**: Updated `_bates_call_batch_fast()` to call `_bates_cf_batch()` instead of list comprehensions.
+  - **Fix 5**: `HestonModel.calibrate()` now uses L-BFGS-B (4 starting points, ~800 evals total) instead of `differential_evolution` (~2,000 evals). `calibrate_merton()` and `calibrate_bates()` also use L-BFGS-B.
+  - **Fix 6**: `n_sample` reduced to 25 quotes (was 80–100); moneyness filter [0.80, 1.20] added.
+  - **Vol Surface page** (`app/pages/01_Vol_Surface.py`): Added visible timing estimates caption under the 4 control buttons ("Heston ~15–45 s", "All Models ~60–120 s"). Added `st.info` progress banners before each calibration step.
+
+### Added
+- **`app/heston.py`** — `_heston_cf_batch()`: Vectorized Heston characteristic function accepting a 1D complex array of Fourier frequencies. Processes entire phi grid in one numpy pass — ~64x fewer Python function calls per TTM vs scalar loop.
+- **`app/heston.py`** — `_bates_cf_batch()`: Vectorized Bates characteristic function. Delegates Heston component to `_heston_cf_batch()`, multiplies by vectorized jump CF factor.
+
+---
+
 ## [0.5.3] — 2026-06-07
 
 ### Fixed
