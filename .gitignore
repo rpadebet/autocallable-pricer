@@ -9,3 +9,5 @@ venv/
 .streamlit/
 *.log
 pytest-cache-files-*
+CLAUDE.md
+NEXT_SESSION.md

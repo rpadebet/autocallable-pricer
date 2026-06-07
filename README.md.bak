@@ -1,6 +1,6 @@
 # AutoCallable Analytics Platform
 
-A pricing and analytics platform for autocallable structured products, built as a technical demonstration.
+A pricing and analytics platform for autocallable structured products, built as a technical demonstration for the **MerQube Index Researcher — Options** role.
 
 **Live demo**: [https://autocallable-pricer.streamlit.app](https://autocallable-pricer.streamlit.app) *(link active after deploy)*
 
@@ -57,7 +57,7 @@ Demonstrates the key practical result of Paper 3. Standard MC Delta is noisy and
 
 ## Market Data
 
-The app uses **pre-collected static snapshots** of SPX options chains (in `sample_data/`). There are no live API calls at runtime — this makes every run reproducible and eliminates demo failures. Snapshots were collected via `scripts/collect_snapshot.py` using yfinance during market hours.
+The app uses **pre-collected static snapshots** of SPX options chains (in `sample_data/`). There are no live API calls at runtime — this makes every run reproducible and eliminates demo-day failures. Snapshots were collected via `scripts/collect_snapshot.py` using yfinance during market hours.
 
 ---
 
