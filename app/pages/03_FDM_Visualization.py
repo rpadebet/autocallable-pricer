@@ -140,7 +140,7 @@ st.divider()
 # TABS
 # ==============================================================================
 
-tab1, tab2, tab3 = st.tabs(["🌡️ V(S,t) Heatmap", "📉 Price Slice at t", "📐 Greeks"])
+tab1, tab2, tab3, tab4 = st.tabs(["🌡️ V(S,t) Heatmap", "📉 Price Slice at t", "📐 Greeks", "📊 Scheme Comparison"])
 
 # ──────────────────────────────────────────────────────────────────────────────
 # TAB 1 — HEATMAP
@@ -380,3 +380,349 @@ with tab3:
             "Delta interpretation: a 1-point increase in S changes the price by ~Δ dollars. "
             "Gamma: rate of change of delta (convexity). Theta: time decay."
         )
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# TAB 4 — SCHEME COMPARISON (Explicit vs Crank-Nicolson)
+# ──────────────────────────────────────────────────────────────────────────────
+with tab4:
+    st.subheader("Explicit FD vs Crank-Nicolson: Convergence, Stability & Speed")
+    st.caption(
+        "Both schemes solve the same heat equation. CN is unconditionally stable and "
+        "second-order in time; explicit is simpler but requires small time steps."
+    )
+
+    # ── Controls ──────────────────────────────────────────────────────────────
+    run_compare = st.button(
+        "▶ Run Scheme Comparison", type="primary", use_container_width=False,
+        key="run_scheme_compare",
+        help="Prices the autocallable at multiple grid resolutions using both schemes. "
+             "Takes ~10-20 seconds."
+    )
+
+    if not run_compare and "scheme_compare_results" not in st.session_state:
+        st.info(
+            "Click **Run Scheme Comparison** above to compute the three panels. "
+            "Uses the product and parameters from the sidebar."
+        )
+        st.stop()
+
+    # ── Computation ───────────────────────────────────────────────────────────
+    if run_compare:
+        import time as _time
+
+        _ac = params["autocallable"]
+        _sigma = params["sigma"]
+        _r = params["r"]
+        _q = params["q"]
+
+        # --- Panel 1: Convergence — price vs N_x for both schemes -------
+        # Fix N_tau proportional to N_x (so both grids are "balanced").
+        # CN uses exactly the requested N_tau; explicit auto-corrects if needed.
+        convergence_grid_sizes = [50, 100, 200, 400]
+        prices_explicit = []
+        prices_cn = []
+
+        with st.spinner("Computing convergence chart (8 pricing runs)…"):
+            for nx in convergence_grid_sizes:
+                # Explicit scheme
+                fd_e = FDPricer(_ac, sigma=_sigma, r=_r, q=_q,
+                                N_x=nx, N_tau=nx, scheme="explicit")
+                prices_explicit.append(fd_e.price().price)
+
+                # Crank-Nicolson scheme
+                fd_c = FDPricer(_ac, sigma=_sigma, r=_r, q=_q,
+                                N_x=nx, N_tau=nx, scheme="crank_nicolson")
+                prices_cn.append(fd_c.price().price)
+
+        # --- Panel 2: Stability — vary requested N_tau, fix N_x=100 -----
+        # We show the *actual* N_tau each scheme uses after auto-correction.
+        # Explicit auto-corrects when Courant > 0.5; CN never does.
+        # Price is shown vs requested N_tau to illustrate why CN is efficient.
+        stability_n_tau_requested = [5, 10, 20, 50, 100, 200]
+        stability_nx = 100
+        stability_prices_exp = []
+        stability_prices_cn = []
+        stability_n_tau_actual_exp = []
+        stability_n_tau_actual_cn = []
+        stability_courants = []
+
+        with st.spinner("Computing stability demo (12 pricing runs)…"):
+            for nt in stability_n_tau_requested:
+                fd_e = FDPricer(_ac, sigma=_sigma, r=_r, q=_q,
+                                N_x=stability_nx, N_tau=nt, scheme="explicit")
+                fd_c = FDPricer(_ac, sigma=_sigma, r=_r, q=_q,
+                                N_x=stability_nx, N_tau=nt, scheme="crank_nicolson")
+
+                stability_prices_exp.append(fd_e.price().price)
+                stability_prices_cn.append(fd_c.price().price)
+                stability_n_tau_actual_exp.append(fd_e.N_tau)  # may be auto-corrected
+                stability_n_tau_actual_cn.append(fd_c.N_tau)   # always equals nt
+                stability_courants.append(fd_c.courant)        # same grid geometry for both
+
+        # --- Panel 3: Timing — N_x=200, N_tau=200, repeat 3 times each --
+        timing_nx = 200
+        timing_ntau = 200
+        n_timing_reps = 3
+        times_exp_ms = []
+        times_cn_ms = []
+
+        with st.spinner("Timing comparison (6 pricing runs)…"):
+            for _ in range(n_timing_reps):
+                t0 = _time.perf_counter()
+                FDPricer(_ac, sigma=_sigma, r=_r, q=_q,
+                         N_x=timing_nx, N_tau=timing_ntau,
+                         scheme="explicit").price()
+                times_exp_ms.append((_time.perf_counter() - t0) * 1000)
+
+                t0 = _time.perf_counter()
+                FDPricer(_ac, sigma=_sigma, r=_r, q=_q,
+                         N_x=timing_nx, N_tau=timing_ntau,
+                         scheme="crank_nicolson").price()
+                times_cn_ms.append((_time.perf_counter() - t0) * 1000)
+
+        # Cache all results so the tab doesn't re-run on every interaction
+        st.session_state["scheme_compare_results"] = {
+            "convergence_grid_sizes": convergence_grid_sizes,
+            "prices_explicit": prices_explicit,
+            "prices_cn": prices_cn,
+            "stability_n_tau_requested": stability_n_tau_requested,
+            "stability_prices_exp": stability_prices_exp,
+            "stability_prices_cn": stability_prices_cn,
+            "stability_n_tau_actual_exp": stability_n_tau_actual_exp,
+            "stability_n_tau_actual_cn": stability_n_tau_actual_cn,
+            "stability_courants": stability_courants,
+            "stability_nx": stability_nx,
+            "times_exp_ms": times_exp_ms,
+            "times_cn_ms": times_cn_ms,
+            "timing_nx": timing_nx,
+            "timing_ntau": timing_ntau,
+        }
+
+    # ── Render from cached results ────────────────────────────────────────────
+    cmp = st.session_state.get("scheme_compare_results")
+    if cmp is None:
+        st.stop()
+
+    import pandas as pd
+
+    st.divider()
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # PANEL 1 — CONVERGENCE CHART
+    # ══════════════════════════════════════════════════════════════════════════
+    st.markdown("### Panel 1 — Price Convergence vs Grid Resolution")
+    st.caption(
+        "Both schemes converge to the same true price as N_x (spatial grid points) "
+        "increases. N_tau = N_x in each run (balanced grid). "
+        "CN converges faster per step because it is O(Δτ²) vs O(Δτ) for explicit."
+    )
+
+    fig_conv = go.Figure()
+
+    fig_conv.add_trace(go.Scatter(
+        x=cmp["convergence_grid_sizes"],
+        y=cmp["prices_explicit"],
+        mode="lines+markers",
+        name="Explicit FD",
+        line=dict(color="#EF5350", width=2, dash="dash"),
+        marker=dict(size=8, symbol="circle"),
+    ))
+    fig_conv.add_trace(go.Scatter(
+        x=cmp["convergence_grid_sizes"],
+        y=cmp["prices_cn"],
+        mode="lines+markers",
+        name="Crank-Nicolson",
+        line=dict(color="#42A5F5", width=2),
+        marker=dict(size=8, symbol="diamond"),
+    ))
+
+    # Add a reference line at the fine-grid CN price (best estimate of true price)
+    best_price = cmp["prices_cn"][-1]
+    fig_conv.add_hline(
+        y=best_price,
+        line=dict(color="gray", dash="dot", width=1),
+        annotation_text=f"Fine-grid estimate: ${best_price:,.2f}",
+        annotation_position="bottom right",
+    )
+
+    fig_conv.update_layout(
+        title="Price Convergence: Explicit vs Crank-Nicolson (N_tau = N_x)",
+        xaxis=dict(title="Spatial Grid Points (N_x)", type="log",
+                   tickvals=cmp["convergence_grid_sizes"],
+                   ticktext=[str(n) for n in cmp["convergence_grid_sizes"]]),
+        yaxis=dict(title="Autocallable Price ($)"),
+        legend=dict(x=0.02, y=0.98),
+        height=380,
+        margin=dict(t=60, b=50),
+    )
+    st.plotly_chart(fig_conv, use_container_width=True)
+
+    # Convergence table
+    conv_df = pd.DataFrame({
+        "N_x (= N_tau)": cmp["convergence_grid_sizes"],
+        "Explicit Price ($)": [f"${p:,.2f}" for p in cmp["prices_explicit"]],
+        "CN Price ($)": [f"${p:,.2f}" for p in cmp["prices_cn"]],
+        "Difference ($)": [f"${abs(e - c):,.2f}" for e, c in
+                           zip(cmp["prices_explicit"], cmp["prices_cn"])],
+    })
+    st.dataframe(conv_df, hide_index=True, use_container_width=True)
+
+    st.divider()
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # PANEL 2 — STABILITY DEMO
+    # ══════════════════════════════════════════════════════════════════════════
+    st.markdown(f"### Panel 2 — Stability Demo (N_x = {cmp['stability_nx']}, vary N_tau)")
+    st.caption(
+        "**Explicit FD** requires Courant number ρ = Δτ/Δx² ≤ 0.5 or it becomes "
+        "numerically unstable. FDPricer auto-corrects N_tau upward to stay stable, "
+        "so the *actual* step count can far exceed what you requested. "
+        "**Crank-Nicolson is unconditionally stable** — it uses exactly the requested "
+        "N_tau, regardless of Courant number."
+    )
+
+    fig_stab = go.Figure()
+
+    fig_stab.add_trace(go.Scatter(
+        x=cmp["stability_n_tau_requested"],
+        y=cmp["stability_prices_exp"],
+        mode="lines+markers",
+        name="Explicit FD (price)",
+        line=dict(color="#EF5350", width=2, dash="dash"),
+        marker=dict(size=8, symbol="circle"),
+    ))
+    fig_stab.add_trace(go.Scatter(
+        x=cmp["stability_n_tau_requested"],
+        y=cmp["stability_prices_cn"],
+        mode="lines+markers",
+        name="Crank-Nicolson (price)",
+        line=dict(color="#42A5F5", width=2),
+        marker=dict(size=8, symbol="diamond"),
+    ))
+
+    fig_stab.update_layout(
+        title=f"Price vs Requested N_tau — N_x={cmp['stability_nx']} fixed",
+        xaxis=dict(title="Requested N_tau (time steps)"),
+        yaxis=dict(title="Autocallable Price ($)"),
+        legend=dict(x=0.02, y=0.98),
+        height=360,
+        margin=dict(t=60, b=50),
+    )
+    st.plotly_chart(fig_stab, use_container_width=True)
+
+    # Stability table — key column is "Actual N_tau used" by explicit vs CN
+    stab_df = pd.DataFrame({
+        "Requested N_tau": cmp["stability_n_tau_requested"],
+        "Courant ρ": [f"{c:.2f}" for c in cmp["stability_courants"]],
+        "Explicit: Actual N_tau": cmp["stability_n_tau_actual_exp"],
+        "CN: Actual N_tau": cmp["stability_n_tau_actual_cn"],
+        "Explicit Price ($)": [f"${p:,.2f}" for p in cmp["stability_prices_exp"]],
+        "CN Price ($)": [f"${p:,.2f}" for p in cmp["stability_prices_cn"]],
+    })
+    st.dataframe(stab_df, hide_index=True, use_container_width=True)
+
+    st.caption(
+        "When Courant ρ > 0.5, the explicit scheme would be numerically unstable if "
+        "used as-is. FDPricer auto-corrects N_tau to ensure ρ ≤ 0.4 — note how "
+        "**Explicit: Actual N_tau** jumps well above the requested value at coarse "
+        "grids. CN needs no such correction and uses exactly the requested step count."
+    )
+
+    st.divider()
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # PANEL 3 — TIMING COMPARISON
+    # ══════════════════════════════════════════════════════════════════════════
+    st.markdown(f"### Panel 3 — Timing Comparison  (N_x = {cmp['timing_nx']}, N_tau = {cmp['timing_ntau']})")
+    st.caption(
+        "At the same grid resolution, CN solves a tridiagonal system (Thomas algorithm, "
+        "O(N_x)) at each time step. Explicit does a single vectorized array operation "
+        "per step (also O(N_x), but with lower constant). The tradeoff: CN achieves "
+        "O(Δτ²) accuracy vs O(Δτ) for explicit — so CN needs fewer steps for the same "
+        "accuracy, making it faster overall at production grid sizes."
+    )
+
+    avg_exp = np.mean(cmp["times_exp_ms"])
+    avg_cn = np.mean(cmp["times_cn_ms"])
+    std_exp = np.std(cmp["times_exp_ms"])
+    std_cn = np.std(cmp["times_cn_ms"])
+
+    tc1, tc2 = st.columns(2)
+    with tc1:
+        st.metric(
+            label="Explicit FD — avg time",
+            value=f"{avg_exp:.1f} ms",
+            delta=f"±{std_exp:.1f} ms std",
+            delta_color="off",
+        )
+    with tc2:
+        st.metric(
+            label="Crank-Nicolson — avg time",
+            value=f"{avg_cn:.1f} ms",
+            delta=f"±{std_cn:.1f} ms std",
+            delta_color="off",
+        )
+
+    timing_df = pd.DataFrame({
+        "Run": [f"Run {i+1}" for i in range(len(cmp["times_exp_ms"]))],
+        "Explicit (ms)": [f"{t:.1f}" for t in cmp["times_exp_ms"]],
+        "Crank-Nicolson (ms)": [f"{t:.1f}" for t in cmp["times_cn_ms"]],
+    })
+    st.dataframe(timing_df, hide_index=True, use_container_width=True)
+
+    st.divider()
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # METHODOLOGY NOTE
+    # ══════════════════════════════════════════════════════════════════════════
+    with st.expander("📖 Why Crank-Nicolson vs Explicit — Methodology", expanded=False):
+        st.markdown("""
+**Explicit Finite Difference (used in Paper 1)**
+
+The explicit update rule advances the heat equation one step at a time using only
+information from the *current* time level:
+
+$$u^{n+1}_j = u^n_j + \\rho \\left(u^n_{j+1} - 2u^n_j + u^n_{j-1}\\right), \\quad \\rho = \\frac{\\Delta\\tau}{\\Delta x^2}$$
+
+**Requirement**: ρ ≤ ½ (Courant–Friedrichs–Lewy condition). If violated, rounding
+errors grow exponentially each step — the scheme is *conditionally stable*.
+
+**Crank-Nicolson**
+
+CN averages the explicit and implicit updates, using information from *both* the
+current and next time levels:
+
+$$u^{n+1}_j - u^n_j = \\frac{\\rho}{2}\\left[(u^{n+1}_{j+1} - 2u^{n+1}_j + u^{n+1}_{j-1}) + (u^n_{j+1} - 2u^n_j + u^n_{j-1})\\right]$$
+
+Rearranging gives a **tridiagonal linear system** $A \\cdot u^{n+1} = d$ per time step,
+solved in O(N_x) using the Thomas algorithm.
+
+**CN is unconditionally stable** for any ρ — no CFL restriction. It is also
+**second-order accurate in time** (O(Δτ²) vs O(Δτ) for explicit), so it achieves the
+same accuracy with far fewer time steps.
+
+| Property | Explicit | Crank-Nicolson |
+|----------|----------|----------------|
+| Stability | Conditional (ρ ≤ 0.5) | Unconditional |
+| Time accuracy | O(Δτ) | O(Δτ²) |
+| Space accuracy | O(Δx²) | O(Δx²) |
+| Per-step cost | O(N_x) — vector add | O(N_x) — Thomas solve |
+| Steps needed for same accuracy | High | Low |
+
+**When to use each**
+
+- **Explicit**: Simpler to implement and debug; direct connection to Paper 1's derivation;
+  good for education and validation. Fine for moderate grids (N_x ≤ 200) where the
+  CFL constraint is not binding.
+
+- **Crank-Nicolson**: Preferred for production use. Fewer time steps at the same
+  accuracy level means faster pricing at large grids. Essential when N_x > 500 or
+  when very fine time resolution is needed (e.g., daily observation dates).
+""")
+
+    # ── Refresh notice ─────────────────────────────────────────────────────────
+    st.caption(
+        "Results cached for this session. Click **Run Scheme Comparison** again to "
+        "recompute with updated sidebar parameters."
+    )

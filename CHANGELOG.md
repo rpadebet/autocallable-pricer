@@ -4,6 +4,20 @@ All notable changes to the AutoCallable Analytics Platform are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 Versioning follows [Semantic Versioning](https://semver.org/): patch (0.0.X) for bug fixes, minor (0.X.0) for new features, major (X.0.0) for architecture changes.
 
+## [0.5.6] — 2026-06-07
+
+### Fixed
+- **`app/pages/02_Pricer.py`** — Spread analysis line always said "within 2% at N=10K confirms
+  implementations are consistent" even when the vol model was Heston/Bates and the spread was
+  expected and meaningful (~5% in the reported case). When Heston/Bates is active the FDM uses
+  flat σ while MC uses full stochastic-vol dynamics, so the gap is the vol-model premium — not
+  a consistency error. Fixed: when Heston/Bates is selected, shows "📊 Vol-model premium: $X.XX
+  (Y.YY%) — FDM uses flat σ=20.0%; MC uses full Heston/Bates dynamics (vol-of-vol, skew, ...)."
+  When flat/local vol is selected (all methods share same vol model), the old green/yellow/red
+  consistency check is preserved with a corrected red-case message.
+
+---
+
 ## [0.5.5] — 2026-06-07
 
 ### Fixed

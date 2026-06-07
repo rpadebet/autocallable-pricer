@@ -408,15 +408,32 @@ with tab1:
         )
         st.plotly_chart(fig, use_container_width=True)
 
-    # Spread analysis
+    # Spread analysis — interpretation depends on vol model.
+    # When Heston/Bates is selected, FDM uses flat σ while MC uses stochastic vol,
+    # so a spread is EXPECTED (it's the vol-model premium, not an inconsistency).
+    # Only flag a large spread as a problem when all methods share the same vol model.
     if len(prices) >= 2:
         spread = max(prices) - min(prices)
         spread_pct = spread / np.mean(prices) * 100
-        icon = "🟢" if spread_pct < 1 else "🟡" if spread_pct < 3 else "🔴"
-        st.markdown(
-            f"{icon} **Method spread: ${spread:.2f} ({spread_pct:.2f}%)**  "
-            "— within 2% at N=10K confirms implementations are consistent."
-        )
+        _vm = params.get("vol_model", "flat")
+        if _vm in ("heston", "bates"):
+            _vm_label = "Heston" if _vm == "heston" else "Bates"
+            st.markdown(
+                f"📊 **Vol-model premium: ${spread:.2f} ({spread_pct:.2f}%)**  "
+                f"— FDM uses flat σ = {params['sigma']*100:.1f}%; "
+                f"MC methods use full {_vm_label} dynamics (vol-of-vol, skew, "
+                f"{'jumps' if _vm == 'bates' else 'mean reversion'}). "
+                f"This gap quantifies how much stochastic vol affects autocallable pricing."
+            )
+        else:
+            # Same vol model across all three methods — spread should be small
+            icon = "🟢" if spread_pct < 1 else "🟡" if spread_pct < 3 else "🔴"
+            note = (
+                "within 2% at N=10K — implementations are consistent."
+                if spread_pct < 3
+                else "spread > 3% — try increasing path count or tightening FDM grid."
+            )
+            st.markdown(f"{icon} **Method spread: ${spread:.2f} ({spread_pct:.2f}%)**  — {note}")
 
     # Variance reduction table
     if mc_res and sv_res:
