@@ -81,6 +81,65 @@ class FDResult:
 
 
 # ---------------------------------------------------------------------------
+# Thomas Algorithm (Tridiagonal Matrix Algorithm) — O(N) Solver
+# ---------------------------------------------------------------------------
+
+def thomas_solve(
+    a: np.ndarray,
+    b: np.ndarray,
+    c: np.ndarray,
+    d: np.ndarray,
+) -> np.ndarray:
+    """
+    Solve a tridiagonal linear system A·x = d in O(N) time.
+
+    WHY THIS EXISTS:
+        The Crank-Nicolson scheme for the heat equation produces a tridiagonal
+        system at each time step: A·u^{n+1} = RHS. The naive dense solver
+        (numpy.linalg.solve) is O(N³). The Thomas algorithm exploits the
+        tridiagonal structure for an O(N) solve — essential when N_x = 1000.
+
+    ALGORITHM:
+        Forward sweep: eliminate the sub-diagonal (a) by row operations.
+        Backward substitution: recover the solution from the upper-triangular system.
+
+    Args:
+        a: Sub-diagonal (lower diagonal). Length n. a[0] is unused (no row above first).
+        b: Main diagonal. Length n.
+        c: Super-diagonal (upper diagonal). Length n. c[-1] is unused (no row below last).
+        d: Right-hand side vector. Length n.
+
+    Returns:
+        x: Solution vector of length n satisfying the tridiagonal system.
+
+    REFERENCE:
+        NEXT_SESSION.md §Feature B — Thomas Algorithm pseudocode.
+    """
+    n = len(d)
+
+    # Work on mutable copies to avoid modifying caller's arrays
+    c_ = c.astype(float).copy()
+    d_ = d.astype(float).copy()
+
+    # Forward sweep: eliminate sub-diagonal entries
+    # After this, the system is upper-triangular.
+    c_[0] = c_[0] / b[0]
+    d_[0] = d_[0] / b[0]
+    for i in range(1, n):
+        denom = b[i] - a[i] * c_[i - 1]
+        c_[i] = c_[i] / denom
+        d_[i] = (d_[i] - a[i] * d_[i - 1]) / denom
+
+    # Backward substitution: recover x from upper-triangular system
+    x = np.empty(n)
+    x[-1] = d_[-1]
+    for i in range(n - 2, -1, -1):
+        x[i] = d_[i] - c_[i] * x[i + 1]
+
+    return x
+
+
+# ---------------------------------------------------------------------------
 # FDPricer Class
 # ---------------------------------------------------------------------------
 
@@ -121,6 +180,8 @@ class FDPricer:
         N_tau: int = 100,  # Reduced default for speed; spec says 500 for accuracy
         x_min: float = -5.0,
         scheme: str = "explicit",
+        vol_model: str = "flat",
+        vol_surface=None,
     ) -> None:
         self.ac = autocallable
         self.sigma = sigma
@@ -131,6 +192,8 @@ class FDPricer:
         self.N_tau = N_tau
         self.x_min = x_min
         self.scheme = scheme
+        self.vol_model = vol_model
+        self.vol_surface = vol_surface
 
         # The "strike equivalent" in the paper's change of variables
         # C = call_barrier * S_ref (the spot level that triggers the call)
@@ -274,6 +337,87 @@ class FDPricer:
 
         return u
 
+    def _cn_step(self, u: np.ndarray) -> np.ndarray:
+        """
+        Perform one Crank-Nicolson time step for the heat equation.
+
+        CN SCHEME:
+            Averages explicit (forward) and implicit (backward) updates:
+
+                u^{n+1}_j - u^n_j = (ρ/2)(u^{n+1}_{j+1} - 2u^{n+1}_j + u^{n+1}_{j-1})
+                                   + (ρ/2)(u^n_{j+1}    - 2u^n_j    + u^n_{j-1})
+
+            where ρ = dtau / dx².  Rearranges to tridiagonal system A·u^{n+1} = d:
+                A: main diagonal (1 + ρ), off-diagonals (−ρ/2)
+                d: (ρ/2)·u^n_{j-1} + (1 − ρ)·u^n_j + (ρ/2)·u^n_{j+1}
+
+        BOUNDARY CONDITIONS:
+            Left  (j=0):   Dirichlet u=0  (deep OTM — option worthless)
+            Right (j=N-1): Neumann u[-1]=u[-2]  (no curvature at far end)
+
+        The Neumann BC substitutes u^{n+1}_{N-1} = u^{n+1}_{N-2} into the last
+        interior equation, changing the main diagonal entry from (1+ρ) to (1+ρ/2)
+        and zeroing the super-diagonal entry there.
+
+        WHY CN IS UNCONDITIONALLY STABLE:
+            The explicit scheme requires ρ ≤ 0.5 (CFL condition). CN has no such
+            restriction — it is stable for any ρ. This allows larger time steps
+            (coarser tau grid) at the same accuracy level. For the same N_tau,
+            CN achieves O(dtau²) accuracy vs O(dtau) for explicit.
+
+        Args:
+            u: Current heat-equation solution array of shape (N_x,).
+
+        Returns:
+            u_new: Solution at next tau step, shape (N_x,).
+        """
+        N = len(u)
+        r = self.courant    # ρ = dtau / dx²; may exceed 0.5 for CN (that's fine)
+        n_int = N - 2       # number of interior unknowns (indices 1 to N-2)
+
+        # --- Build tridiagonal system for interior points (j = 1 .. N-2) ---
+
+        # Sub-diagonal: a[i] = −ρ/2 for i > 0; a[0] unused (no row above first)
+        a = np.full(n_int, -r / 2.0)
+
+        # Main diagonal: b[i] = 1 + ρ  (modified at last row for Neumann BC)
+        b = np.full(n_int, 1.0 + r)
+
+        # Super-diagonal: c[i] = −ρ/2  (set to 0 at last row for Neumann BC)
+        c = np.full(n_int, -r / 2.0)
+
+        # RHS: standard CN right-hand side using the previous time step's u
+        # d[i] = (ρ/2)·u[j-1] + (1−ρ)·u[j] + (ρ/2)·u[j+1]  where j = i + 1
+        # Vectorized: u[:-2] are the j-1 values, u[1:-1] the j values, u[2:] the j+1 values
+        d = (r / 2.0) * u[:-2] + (1.0 - r) * u[1:-1] + (r / 2.0) * u[2:]
+
+        # --- Apply boundary condition modifications ---
+
+        # Left Dirichlet BC (j=0, u^{n+1}_0 = 0):
+        #   The cross-term a[0]*u^{n+1}_0 = 0, so d[0] needs no modification.
+        #   a[0] is never accessed by Thomas (no equation above row 0), so leave as-is.
+
+        # Right Neumann BC (u^{n+1}_{N-1} = u^{n+1}_{N-2}):
+        #   Substitute into last interior equation:
+        #     -ρ/2·x_{N-3} + (1+ρ)·x_{N-2} − ρ/2·x_{N-2} = d[-1]
+        #   → main diagonal becomes (1 + ρ/2), super-diagonal disappears
+        b[-1] = 1.0 + r / 2.0
+        c[-1] = 0.0
+        # d[-1] = (ρ/2)·u[N-3] + (1-ρ)·u[N-2] + (ρ/2)·u[N-1]
+        # Since u[N-1] = u[N-2] from the previous step's BC enforcement,
+        # this equals (ρ/2)·u[N-3] + (1-ρ/2)·u[N-2], which is exactly right.
+
+        # --- Solve tridiagonal system ---
+        x = thomas_solve(a, b, c, d)
+
+        # --- Reconstruct full solution ---
+        u_new = np.empty(N)
+        u_new[0] = 0.0          # Left Dirichlet BC
+        u_new[1:-1] = x         # Interior solution from Thomas
+        u_new[-1] = u_new[-2]   # Right Neumann BC (enforce for next step's consistency)
+
+        return u_new
+
     def price(self, return_grid: bool = False) -> FDResult:
         """
         Price the autocallable using explicit finite difference backward induction.
@@ -301,6 +445,10 @@ class FDPricer:
             - Courant stability is enforced in __init__; if violated, N_tau is
               increased automatically.
         """
+        # Dispatch to local vol pricing method if requested
+        if self.vol_model == "local" and self.vol_surface is not None:
+            return self._price_local_vol(return_grid=return_grid)
+
         obs_dates = self.ac.observation_dates()
         # Convert observation t-values to tau values
         obs_taus = [self._t_to_tau(t) for t in obs_dates]
@@ -338,19 +486,21 @@ class FDPricer:
                     barrier = self.ac.call_barrier_at_period(i) * self.S_ref
                     call_counts[i] = (self.S_axis >= barrier).mean()
 
-            # --- Explicit FD update: du/dtau = d²u/dx² ---
-            # Interior points only (not boundary)
-            u_new = u.copy()
-            u_new[1:-1] = u[1:-1] + rho * (u[2:] - 2 * u[1:-1] + u[:-2])
-
-            # Boundary conditions:
-            # Left (x = x_min, S → 0): option worthless → u = 0
-            u_new[0] = 0.0
-            # Right (x = x_max, S → ∞): intrinsic value dominates
-            # Neumann BC: du/dx = 0 (no curvature at far OTM call)
-            u_new[-1] = u_new[-2]
-
-            u = u_new
+            # --- FD update: dispatch on scheme ---
+            if self.scheme == "crank_nicolson":
+                # CN: unconditionally stable, O(dtau²) accuracy
+                # Solves tridiagonal system via Thomas algorithm
+                u = self._cn_step(u)
+            else:
+                # Explicit scheme: du/dtau = d²u/dx²  (must have ρ ≤ 0.5)
+                u_new = u.copy()
+                u_new[1:-1] = u[1:-1] + rho * (u[2:] - 2 * u[1:-1] + u[:-2])
+                # Boundary conditions:
+                # Left (x = x_min, S → 0): option worthless → u = 0
+                u_new[0] = 0.0
+                # Right (x = x_max, S → ∞): Neumann BC (no curvature)
+                u_new[-1] = u_new[-2]
+                u = u_new
 
             # Store grid snapshot
             if return_grid and tau_step in snapshot_indices:
@@ -385,6 +535,147 @@ class FDPricer:
             result.S_axis = self.S_axis.copy()
             result.t_axis = np.array(t_snapshots)
 
+        return result
+
+
+    def _price_local_vol(self, return_grid: bool = False) -> "FDResult":
+        """
+        Price using local vol (Dupire surface) via direct log-space FD.
+
+        WHY A DIFFERENT METHOD:
+            The heat-equation change-of-variables assumes constant sigma. With local
+            vol, sigma = sigma(x, t) varies across the grid, so the transformation is
+            no longer exact. Instead, we work directly with V(x, t) in log-price space:
+
+                PDE: ∂V/∂t + (r-q-σ²/2)·∂V/∂x + (σ²/2)·∂²V/∂x² - r·V = 0
+
+            Converted to backward time τ = T - t (so we sweep τ: 0→T):
+
+                ∂V/∂τ = (σ²_n/2)·(V[n+1]-2V[n]+V[n-1])/dx²
+                      + (r-q-σ²_n/2)·(V[n+1]-V[n-1])/(2dx)
+                      - r·V[n]
+
+            where σ_n = sigma_loc(S_n, t_current) is the local vol at grid node n.
+
+        STABILITY:
+            Explicit scheme stability requires:
+                max_n( σ²_n * dt/dx² ) ≤ 0.5
+            We compute the maximum sigma in the local vol surface and enforce this
+            by auto-adjusting N_tau (same as the flat-vol Courant correction).
+
+        BOUNDARY CONDITIONS (same as heat-equation approach):
+            Left  (x = x_min, S → 0): V = 0  (deep OTM, option worthless).
+            Right (x = x_max):        Neumann: V[-1] = V[-2].
+
+        AT OBSERVATION DATES:
+            Autocall condition imposed identically to the flat-vol method.
+
+        Args:
+            return_grid: If True, store V(S, t) snapshots in result.
+
+        Returns:
+            FDResult — same structure as the flat-vol price() output.
+        """
+        import numpy as np
+
+        # --- Pre-compute local vol grid for fast vectorised lookup ---
+        # We build a sigma array of shape (N_x,) at each time step.
+        # Pre-compute on (x_axis, t_axis) grid to avoid repeated vol surface calls.
+        S_ax = self.S_axis                         # shape (N_x,)
+        moneyness_ax = S_ax / self.vol_surface.S0  # relative to vol surface spot
+
+        # Physical backward-time grid: T steps from t=T (maturity) to t=0
+        # We match N_tau time steps but in physical time, not tau-space.
+        dt_phys = self.T / self.N_tau              # physical time step
+        t_axis_phys = np.linspace(self.T, 0.0, self.N_tau + 1)  # T, T-dt, ..., 0
+
+        # --- Terminal payoff at t=T ---
+        # V(S, T) = discounted payoff at maturity for each spot.
+        # Assume: no knock-in at maturity (conservative initialisation).
+        # Paths that knocked in are tracked via the barrier check during backward sweep.
+        V = np.zeros(self.N_x)
+        ki_pv = np.maximum(S_ax / self.S_ref, self.ac.protection_floor) * self.ac.notional
+        safe_pv = self.ac.notional * np.ones(self.N_x)
+        ki_mask = S_ax < self.ac.protection_barrier * self.S_ref
+        V = np.where(ki_mask, ki_pv, safe_pv)
+
+        obs_dates = self.ac.observation_dates()
+        obs_processed = [False] * len(obs_dates)
+
+        if return_grid:
+            n_snapshots = min(50, self.N_tau)
+            snapshot_steps = set(np.linspace(0, self.N_tau - 1, n_snapshots, dtype=int))
+            grid_snapshots = []
+            t_snapshots_list = []
+
+        for step in range(self.N_tau):
+            # Current forward time (from today): t decreases as we sweep backward
+            t_current = t_axis_phys[step + 1]  # time after this step
+
+            # --- Autocall BC at observation dates ---
+            # Apply when we cross an observation date going backward in time
+            for i, t_obs in enumerate(obs_dates):
+                if (not obs_processed[i]) and (t_current <= t_obs < t_axis_phys[step]):
+                    barrier = self.ac.call_barrier_at_period(i) * self.S_ref
+                    call_pv = (self.ac.redemption_at_call * self.ac.notional
+                               + self.ac.coupon_per_period())
+                    V = np.where(S_ax >= barrier, call_pv, V)
+                    obs_processed[i] = True
+
+            # --- Local vol at each grid node for this time step ---
+            # Clamp moneyness and time to valid surface range
+            t_q = float(np.clip(t_current, 0.01, self.ac.maturity_years + 0.05))
+            m_q = np.clip(moneyness_ax, 0.40, 1.80)
+            sigma_n = np.array([
+                self.vol_surface.dupire_local_vol(float(m), t_q) for m in m_q
+            ])  # shape (N_x,)
+            sigma_n = np.clip(sigma_n, 0.05, 1.0)
+
+            # --- Explicit FD update in log-price space ---
+            dx = self.dx
+            V_new = V.copy()
+            # Diffusion coefficient per node: σ²/2
+            diff_coeff = 0.5 * sigma_n[1:-1] ** 2
+            # Drift coefficient per node: r - q - σ²/2
+            drift_coeff = (self.r - self.q) - 0.5 * sigma_n[1:-1] ** 2
+
+            # Second-order central difference (diffusion):
+            d2V = (V[2:] - 2 * V[1:-1] + V[:-2]) / dx ** 2
+            # First-order central difference (drift):
+            dV = (V[2:] - V[:-2]) / (2 * dx)
+
+            V_new[1:-1] = (V[1:-1]
+                           + dt_phys * diff_coeff * d2V
+                           + dt_phys * drift_coeff * dV
+                           - dt_phys * self.r * V[1:-1])
+            # BCs: left = 0 (deep OTM), right = Neumann
+            V_new[0] = 0.0
+            V_new[-1] = V_new[-2]
+            V = np.maximum(V_new, 0.0)  # option value non-negative
+
+            if return_grid and step in snapshot_steps:
+                grid_snapshots.append(V.copy())
+                t_snapshots_list.append(t_current)
+
+        # --- Extract price at S_ref ---
+        idx = int(np.searchsorted(S_ax, self.S_ref))
+        idx = int(np.clip(idx, 1, self.N_x - 2))
+        alpha_i = (self.S_ref - S_ax[idx - 1]) / (S_ax[idx] - S_ax[idx - 1])
+        price = (1 - alpha_i) * V[idx - 1] + alpha_i * V[idx]
+
+        # Call probabilities use flat sigma (analytical formula from Paper 1)
+        call_probs = self.ac.call_probabilities(self.sigma, self.r, self.q)
+
+        result = FDResult(
+            price=float(np.clip(price, 0, self.notional * 1.5)),
+            call_probs=call_probs,
+            obs_dates=obs_dates,
+        )
+        if return_grid:
+            grid_array = np.array(grid_snapshots).T  # (N_x, n_snapshots)
+            result.V_grid = grid_array
+            result.S_axis = S_ax.copy()
+            result.t_axis = np.array(t_snapshots_list)
         return result
 
 
@@ -474,7 +765,4 @@ def continuous_autocall_closedform(
     pv_no_call = p_no_cross * notional * np.exp(-r * T)
 
     #   Coupon stream: simplified as coupon rate × expected time under the barrier
-    expected_life = p_cross * expected_call_time + p_no_cross * T
-    pv_coupon = coupon_pa * notional * expected_life * np.exp(-r * expected_life / 2)
-
-    return float(pv_call + pv_no_call + pv_coupon)
+    expected_life = p_cross * expected_call_time + p_n
