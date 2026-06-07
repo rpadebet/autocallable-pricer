@@ -168,7 +168,7 @@ with tab1:
         The protection barrier absorbed the downside.
         """)
     with col3:
-        coupon_total = ac.coupon_per_period() * ac.n_observations
+        coupon_total = ac.coupon_per_period() * ac.n_observations()
         st.markdown(f"""
         **🟢 Called zone** (spot ≥ {ac.call_barrier:.0%} at any obs. date)
 
@@ -262,7 +262,7 @@ with tab3:
 
     try:
         probs = ac.call_probabilities(sigma=sigma, r=r, q=q)
-        obs_dates = ac.observation_dates
+        obs_dates = ac.observation_dates()
 
         cum_prob = np.cumsum(probs)
         survival = 1.0 - cum_prob
