@@ -27,6 +27,58 @@ from app.data_loader import list_available_snapshots, load_snapshot, get_spot_pr
 from app.components.securities import list_securities, get_security
 
 
+@st.cache_data(show_spinner=False)
+def _cached_load_snapshot(key: str, data_dir: str):
+    """
+    Module-level cached snapshot loader.
+
+    WHY MODULE-LEVEL: Defining @st.cache_data inside render_sidebar() creates a new
+    function object on every call, which means Streamlit's cache hash changes and the
+    data is reloaded on every page navigation. Moving it here ensures the same cache
+    entry is reused across all pages and all render_sidebar() calls.
+    """
+    return load_snapshot(key, data_dir)
+
+
+def _ensure_sidebar_defaults(sec_names: list, snaps: list) -> None:
+    """
+    Initialize all sidebar widget keys in session_state before widgets are rendered.
+
+    WHY THIS MATTERS: In Streamlit, when a widget has both a `key=` and a `value=` /
+    `index=` parameter, the behavior differs by version. The safest pattern is:
+        1. Initialize session_state manually before creating the widget.
+        2. Do NOT pass `index=` or `value=` to widgets whose key is already set.
+    This guarantees that user selections persist across page navigation.
+    """
+    defaults = {
+        "snapshot_idx":           len(snaps) - 1,   # most recent snapshot
+        "security_name":          sec_names[0],      # first security
+        "vol_model_label":        "Flat (Black-Scholes)",
+        "r":                      0.045,
+        "q":                      0.014,
+        "use_calibrated_heston":  False,
+        "v0":                     0.04,
+        "kappa":                  1.5,
+        "theta":                  0.04,
+        "gamma":                  0.30,
+        "rho":                    -0.70,
+        "sigma_flat":             0.20,
+        "lam_j":                  0.10,
+        "mu_j":                   -0.05,
+        "sig_j":                  0.10,
+        "n_paths":                10_000,
+        "n_steps":                252,
+        "seed":                   42,
+        "antithetic":             True,
+        "N_x":                    150,
+        "N_tau":                  100,
+        "x_min":                  -5.0,
+    }
+    for key, default_val in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = default_val
+
+
 def render_sidebar(page_name: str = "") -> dict:
     """
     Render the shared Assumptions sidebar and return all parameters as a dict.
@@ -41,7 +93,8 @@ def render_sidebar(page_name: str = "") -> dict:
         params dict with all model and product parameters. Keys:
             snapshot_key, snapshot_label, S0, r, q,
             security_name, security_params, autocallable,
-            sigma, v0, kappa, theta, gamma, rho,
+            sigma, vol_model, heston_params, jump_params,
+            v0, kappa, theta, gamma, rho,
             n_paths, n_steps, seed, antithetic,
             N_x, N_tau, x_min,
             snapshot_df   (loaded DataFrame, cached)
@@ -66,35 +119,31 @@ def render_sidebar(page_name: str = "") -> dict:
         snap_labels = [s["label"] for s in snaps]
         snap_keys = [s["key"] for s in snaps]
 
-        # Default to most recent snapshot
-        default_snap_idx = len(snaps) - 1
-        if "snapshot_idx" not in st.session_state:
-            st.session_state.snapshot_idx = default_snap_idx
+        # Initialize ALL sidebar defaults before any widget is rendered.
+        # This guarantees persistence across page navigation (see _ensure_sidebar_defaults).
+        _ensure_sidebar_defaults(list_securities(), snaps)
 
         snap_idx = st.selectbox(
             "Data Date",
             options=list(range(len(snaps))),
             format_func=lambda i: snap_labels[i],
-            index=st.session_state.snapshot_idx,
+            # No index= — session_state["snapshot_idx"] was initialized above
             key="snapshot_idx",
             help="Pre-collected SPX options snapshot used for vol surface and spot level.",
         )
         selected_key = snap_keys[snap_idx]
         selected_label = snap_labels[snap_idx]
 
-        # Load snapshot (cached so page reruns don't re-read disk)
-        @st.cache_data
-        def _load(key):
-            return load_snapshot(key, data_dir)
-
-        snap_df = _load(selected_key)
+        # Load snapshot via module-level cache (persists across all page navigations)
+        snap_df = _cached_load_snapshot(selected_key, data_dir)
         S0_market = get_spot_price(snap_df)
         rfr_market = get_rfr(snap_df)
 
+        if "r" not in st.session_state:
+            st.session_state["r"] = float(round(rfr_market, 4))
         r = st.number_input(
             "Risk-Free Rate (r)",
             min_value=0.0, max_value=0.20,
-            value=float(round(rfr_market, 4)),
             step=0.001, format="%.3f",
             key="r",
             help="Continuously compounded annual rate. Default from snapshot (^IRX).",
@@ -118,16 +167,18 @@ def render_sidebar(page_name: str = "") -> dict:
         sec_name = st.selectbox(
             "Security",
             options=sec_names,
-            index=0,
+            # No index= — session_state["security_name"] was initialized by _ensure_sidebar_defaults
             key="security_name",
             help="Choose from 4 pre-configured structures. More details on the Pricer page.",
         )
         sec_params = get_security(sec_name)
 
+        # S0: default to market value only on FIRST load; preserve user overrides after that
+        if "S0" not in st.session_state:
+            st.session_state["S0"] = float(S0_market)
         S0 = st.number_input(
             "Reference Spot (S₀)",
             min_value=100.0, max_value=20000.0,
-            value=float(S0_market),
             step=10.0, format="%.1f",
             key="S0",
             help="SPX reference level at trade date. Defaults to market close from snapshot.",
@@ -185,6 +236,66 @@ def render_sidebar(page_name: str = "") -> dict:
         st.divider()
 
         # ─────────────────────────────────────
+        # Section 3b: Volatility Model selector
+        #
+        # WHY HERE: The vol model is the bridge between the Heston parameters
+        # above and the MC/FD sections below. Showing it here makes clear which
+        # model the pricers will actually use. The Heston params above are only
+        # active when the model is "heston" or "bates".
+        # ─────────────────────────────────────
+        st.markdown("**③b Volatility Model**")
+        st.caption("Selects which vol model all three pricers will use.")
+
+        VOL_MODEL_OPTIONS = {
+            "Flat (Black-Scholes)": "flat",
+            "Local Vol (Dupire)":   "local",
+            "Heston Stochastic Vol": "heston",
+            "Bates (Heston + Jumps)": "bates",
+        }
+        vol_model_label = st.selectbox(
+            "Volatility Model",
+            options=list(VOL_MODEL_OPTIONS.keys()),
+            index=0,
+            key="vol_model_label",
+            help=(
+                "Flat: constant σ (fastest, classic). "
+                "Local Vol: σ(S,t) from Dupire formula — needs live vol surface. "
+                "Heston: stochastic variance (CIR process). "
+                "Bates: Heston + Poisson jumps."
+            ),
+        )
+        vol_model = VOL_MODEL_OPTIONS[vol_model_label]
+
+        # ── Jump parameters (only shown for Bates) ──
+        if vol_model == "bates":
+            with st.expander("Jump Parameters (Bates)", expanded=True):
+                st.caption("Merton jump-diffusion: N(t) ~ Poisson(λ), each jump log-N(μ_J, σ_J²)")
+                lam_j = st.slider("λ (jump intensity, pa)", 0.0, 2.0, 0.10, 0.01,
+                                  format="%.2f", key="lam_j",
+                                  help="Expected number of jumps per year.")
+                mu_j = st.slider("μ_J (mean log-jump)", -0.30, 0.10, -0.05, 0.01,
+                                 format="%.2f", key="mu_j",
+                                 help="Average log-return on jump (negative = downward crash).")
+                sig_j = st.slider("σ_J (log-jump vol)", 0.01, 0.50, 0.10, 0.01,
+                                  format="%.2f", key="sig_j",
+                                  help="Dispersion of jump size.")
+            jump_params = dict(lam=lam_j, mu_J=mu_j, sig_J=sig_j)
+        else:
+            jump_params = None
+
+        if vol_model in ("local",):
+            st.caption(
+                "ℹ️ Local vol uses the Dupire surface from the selected snapshot. "
+                "The flat σ below is used only as FD fallback."
+            )
+        elif vol_model == "heston":
+            st.caption("ℹ️ Heston: uses κ, θ, γ, ρ, v₀ from the Heston section above.")
+        elif vol_model == "bates":
+            st.caption("ℹ️ Bates: Heston vol process + jump diffusion as configured above.")
+
+        st.divider()
+
+        # ─────────────────────────────────────
         # Section 4: Monte Carlo
         # ─────────────────────────────────────
         with st.expander("**④ Monte Carlo**", expanded=False):
@@ -221,7 +332,7 @@ def render_sidebar(page_name: str = "") -> dict:
                               key="x_min", help="Left boundary: S = C*exp(x_min)")
 
         st.divider()
-        st.caption("v0.2.0 — AutoCallable Analytics Platform")
+        st.caption("v0.5.0 — AutoCallable Analytics Platform")
 
     # ─────────────────────────────────────
     # Build and return the params dict
@@ -247,6 +358,9 @@ def render_sidebar(page_name: str = "") -> dict:
         "autocallable":    ac,
         # Vol model
         "sigma":  sigma_flat,
+        "vol_model": vol_model,
+        "heston_params": dict(v0=v0, kappa=kappa, theta=theta, gamma=gamma, rho=rho),
+        "jump_params":   jump_params,
         "v0":     v0,
         "kappa":  kappa,
         "theta":  theta,
