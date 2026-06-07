@@ -464,3 +464,453 @@ class HestonModel:
                     pass
 
         return M, T, IV
+
+
+# ---------------------------------------------------------------------------
+# Merton Jump-Diffusion Model
+# ---------------------------------------------------------------------------
+
+def merton_char_fn(
+    u: complex,
+    S0: float,
+    T: float,
+    r: float,
+    q: float,
+    sigma: float,
+    lam: float,
+    mu_J: float,
+    sig_J: float,
+) -> complex:
+    """
+    Merton (1976) jump-diffusion characteristic function.
+
+    MODEL:
+        dS/S = (r - q - lambda*mu_bar_J) dt + sigma dW + J dN
+        N    = Poisson process with intensity lambda (avg jumps/year)
+        log(1+J) ~ N(mu_J, sig_J^2)
+        mu_bar_J = e^{mu_J + sig_J^2/2} - 1  (mean jump, for drift correction)
+
+    CHARACTERISTIC FUNCTION:
+        phi_Merton(u) = exp(
+            iu*(log(S0) + (r - q - lambda*mu_bar_J)*T)
+            + T*(-u^2*sigma^2/2 + lambda*(e^{iu*mu_J - u^2*sig_J^2/2} - 1))
+        )
+
+    WHY MERTON VS HESTON:
+        Heston: stochastic vol creates skew/smile but poor OTM wings.
+        Merton: flat vol + rare jumps create heavy tails (wings) but static shape.
+        When lambda=0, Merton reduces to Black-Scholes exactly.
+
+    Args:
+        u:      Fourier frequency (may be complex).
+        S0:     Spot price.
+        T:      Maturity in years.
+        r:      Risk-free rate.
+        q:      Dividend yield.
+        sigma:  Flat diffusion volatility (background vol without jumps).
+        lam:    Jump intensity (avg jumps per year).
+        mu_J:   Mean of log-jump: log(1+J) ~ N(mu_J, sig_J^2). Typically negative.
+        sig_J:  Std dev of log-jump.
+
+    Returns:
+        Complex characteristic function value phi_Merton(u).
+    """
+    i = 1j
+
+    # Drift correction: E[J] = mu_bar_J so the process is risk-neutral
+    mu_bar_J = np.exp(mu_J + 0.5 * sig_J ** 2) - 1.0
+
+    # Adjusted drift: (r-q) risk-neutral, -sigma²/2 Ito correction (log-price SDE),
+    # -lam*mu_bar_J jump risk-neutral correction. Heston CF embeds the -v/2 Ito term
+    # implicitly in its factor2/factor3 — Merton has no variance factors so must be explicit.
+    drift = r - q - 0.5 * sigma ** 2 - lam * mu_bar_J
+
+    # Jump term in the exponent: lambda * (e^{iu*mu_J - u^2*sig_J^2/2} - 1)
+    jump_cf_term = np.exp(i * u * mu_J - 0.5 * u ** 2 * sig_J ** 2) - 1.0
+
+    exponent = (
+        i * u * (np.log(S0) + drift * T)
+        + T * (-0.5 * u ** 2 * sigma ** 2 + lam * jump_cf_term)
+    )
+
+    return np.exp(exponent)
+
+
+def bates_char_fn(
+    u: complex,
+    S0: float,
+    T: float,
+    r: float,
+    q: float,
+    v0: float,
+    kappa: float,
+    theta: float,
+    gamma: float,
+    rho: float,
+    lam: float,
+    mu_J: float,
+    sig_J: float,
+) -> complex:
+    """
+    Bates (1996) characteristic function: Heston stochastic vol + Merton jumps.
+
+    MODEL:
+        dS = (r - q - lambda*mu_bar_J) S dt + sqrt(v) S dW_S + J dN
+        dv = kappa*(theta - v) dt + gamma*sqrt(v) dW_v
+        Corr(dW_S, dW_v) = rho
+
+    CHARACTERISTIC FUNCTION:
+        phi_Bates(u) = phi_Heston(u; adjusted drift) * exp(lambda*T*(e^{iu*mu_J - u^2*sig_J^2/2} - 1))
+
+    IMPLEMENTATION NOTE:
+        We call the existing heston_char_fn (Eq. 23 -- no branch cuts) with
+        an adjusted rate r' = r - lambda*mu_bar_J to account for the jump
+        drift correction, then multiply by the jump CF factor.
+        Do NOT rewrite the Heston formula -- Eq. 23 is critical for stability.
+
+    WHY BATES:
+        Heston handles ATM vol term structure and skew.
+        Merton handles OTM wings (rare large jumps).
+        Bates combines both: better fit across the full surface.
+
+    Args:
+        All Heston params (v0, kappa, theta, gamma, rho) plus jump params
+        (lam, mu_J, sig_J).
+
+    Returns:
+        Complex characteristic function value phi_Bates(u).
+    """
+    i = 1j
+
+    # Drift correction for jump risk-neutrality
+    mu_bar_J = np.exp(mu_J + 0.5 * sig_J ** 2) - 1.0
+
+    # Adjusted rate passed into Heston CF: r - lambda*mu_bar_J
+    # This ensures the Bates process is risk-neutral
+    r_adj = r - lam * mu_bar_J
+
+    # Heston component -- use Eq. 23 (no branch cuts). NEVER rewrite this.
+    phi_heston = heston_char_fn(
+        u, S0, T, r_adj, q, v0, kappa, theta, gamma, rho
+    )
+
+    # Jump CF factor: exp(lambda*T * (e^{iu*mu_J - u^2*sig_J^2/2} - 1))
+    jump_cf_term = np.exp(i * u * mu_J - 0.5 * u ** 2 * sig_J ** 2) - 1.0
+    jump_factor = np.exp(lam * T * jump_cf_term)
+
+    return phi_heston * jump_factor
+
+
+def _gil_pelaez_call(char_fn_callable, S0: float, K: float, T: float, r: float, q: float) -> float:
+    """
+    Gil-Pelaez Fourier inversion for a European call, given any characteristic function.
+
+    This is the same integration as heston_call_price() but accepts any CF callable.
+    Used by both merton_call_price() and bates_call_price().
+
+    Args:
+        char_fn_callable: Function u -> CF(u) (complex).
+        S0, K, T, r, q:  Standard option parameters.
+
+    Returns:
+        European call price. Falls back to BS(20%) on failure.
+    """
+    def integrand_P1(phi):
+        cf_phi_minus_i = char_fn_callable(phi - 1j)
+        cf_minus_i = char_fn_callable(-1j)
+        if abs(cf_minus_i) < 1e-15:
+            return 0.0
+        numerator = np.exp(-1j * phi * np.log(K)) * cf_phi_minus_i
+        denominator = 1j * phi * cf_minus_i
+        if abs(denominator) < 1e-15:
+            return 0.0
+        return np.real(numerator / denominator)
+
+    def integrand_P2(phi):
+        cf = char_fn_callable(phi)
+        numerator = np.exp(-1j * phi * np.log(K)) * cf
+        denominator = 1j * phi
+        if abs(denominator) < 1e-15:
+            return 0.0
+        return np.real(numerator / denominator)
+
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            I1, _ = quad(integrand_P1, 1e-6, 200, limit=100, epsabs=1e-6, epsrel=1e-6)
+            I2, _ = quad(integrand_P2, 1e-6, 200, limit=100, epsabs=1e-6, epsrel=1e-6)
+
+        P1 = 0.5 + I1 / np.pi
+        P2 = 0.5 + I2 / np.pi
+
+        call = S0 * np.exp(-q * T) * P1 - K * np.exp(-r * T) * P2
+        call = max(call, max(S0 * np.exp(-q * T) - K * np.exp(-r * T), 0.0))
+        return float(call)
+    except Exception:
+        from app.vol_surface import bs_call
+        return bs_call(S0, K, T, r, q, 0.20)
+
+
+def merton_call_price(
+    S0: float, K: float, T: float, r: float, q: float,
+    sigma: float, lam: float, mu_J: float, sig_J: float,
+) -> float:
+    """
+    European call price under the Merton jump-diffusion model.
+
+    Uses Gil-Pelaez Fourier inversion with the Merton characteristic function.
+    When lam=0 this equals the Black-Scholes price with volatility=sigma.
+
+    Args:
+        S0, K, T, r, q:   Standard option parameters.
+        sigma:             Flat diffusion volatility.
+        lam:               Jump intensity (avg jumps/year).
+        mu_J:              Mean log-jump (typically negative -- downward jumps).
+        sig_J:             Std dev of log-jump.
+
+    Returns:
+        European call price.
+    """
+    sigma = max(sigma, 0.01)
+    lam   = max(lam, 0.0)
+    sig_J = max(sig_J, 0.001)
+    T     = max(T, 1e-6)
+
+    def cf(u):
+        return merton_char_fn(u, S0, T, r, q, sigma, lam, mu_J, sig_J)
+
+    return _gil_pelaez_call(cf, S0, K, T, r, q)
+
+
+def bates_call_price(
+    S0: float, K: float, T: float, r: float, q: float,
+    v0: float, kappa: float, theta: float, gamma: float, rho: float,
+    lam: float, mu_J: float, sig_J: float,
+) -> float:
+    """
+    European call price under the Bates model (Heston + Merton jumps).
+
+    When lam=0 this equals the Heston call price with the given stochastic vol params.
+    When gamma=0 this reduces toward a Merton model (with stochastic vol turned off).
+
+    Args:
+        S0, K, T, r, q:           Standard option parameters.
+        v0, kappa, theta, gamma, rho: Heston stochastic vol parameters.
+        lam, mu_J, sig_J:         Merton jump parameters.
+
+    Returns:
+        European call price.
+    """
+    v0    = max(v0, 1e-6)
+    kappa = max(kappa, 1e-6)
+    theta = max(theta, 1e-6)
+    gamma = max(gamma, 1e-6)
+    rho   = np.clip(rho, -0.999, -0.001)
+    lam   = max(lam, 0.0)
+    sig_J = max(sig_J, 0.001)
+    T     = max(T, 1e-6)
+
+    def cf(u):
+        return bates_char_fn(u, S0, T, r, q, v0, kappa, theta, gamma, rho, lam, mu_J, sig_J)
+
+    return _gil_pelaez_call(cf, S0, K, T, r, q)
+
+
+def calibrate_merton(
+    market_df,
+    S0: float,
+    r: float,
+    q: float,
+) -> dict:
+    """
+    Calibrate Merton jump-diffusion parameters (sigma, lam, mu_J, sig_J)
+    to minimize implied vol RMSE against market quotes.
+
+    Uses L-BFGS-B with 3 starting points to avoid local minima.
+
+    Args:
+        market_df: DataFrame with columns: moneyness, ttm_years, impliedVolatility.
+        S0:        Spot price.
+        r:         Risk-free rate.
+        q:         Dividend yield.
+
+    Returns:
+        Dict: {sigma, lam, mu_J, sig_J, rmse_vol_pts, n_quotes}
+    """
+    from app.vol_surface import bs_implied_vol
+
+    df = market_df.dropna(subset=["impliedVolatility"])
+    df = df[(df["ttm_years"] >= 0.1) & (df["ttm_years"] <= 2.0)]
+    if len(df) > 80:
+        df = df.sample(80, random_state=42)
+
+    m_arr  = df["moneyness"].values
+    t_arr  = df["ttm_years"].values
+    iv_arr = df["impliedVolatility"].values
+
+    def objective(params):
+        sigma_, lam_, mu_J_, sig_J_ = params
+        errors = []
+        for m, t, iv_mkt in zip(m_arr, t_arr, iv_arr):
+            try:
+                price = merton_call_price(S0, m*S0, t, r, q, sigma_, lam_, mu_J_, sig_J_)
+                iv_model = bs_implied_vol(price, S0, m*S0, t, r, q)
+                if iv_model is not None and iv_model > 0:
+                    errors.append((iv_model - iv_mkt) ** 2)
+                else:
+                    errors.append(0.25)
+            except Exception:
+                errors.append(0.25)
+        return np.mean(errors) if errors else 999.0
+
+    bounds = [(0.05, 0.6), (0.0, 5.0), (-0.5, 0.1), (0.01, 0.5)]
+
+    starts = [
+        [0.20, 0.5,  -0.05, 0.10],
+        [0.15, 0.3,  -0.03, 0.08],
+        [0.25, 1.0,  -0.10, 0.15],
+    ]
+
+    best_params = starts[0]
+    best_val = objective(best_params)
+
+    for x0 in starts:
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                res = minimize(
+                    objective, x0, method="L-BFGS-B", bounds=bounds,
+                    options={"maxiter": 200, "ftol": 1e-8},
+                )
+            if res.fun < best_val:
+                best_val = res.fun
+                best_params = list(res.x)
+        except Exception:
+            pass
+
+    sigma, lam, mu_J, sig_J = best_params
+    return {
+        "sigma":        round(float(sigma), 4),
+        "lam":          round(float(lam), 4),
+        "mu_J":         round(float(mu_J), 4),
+        "sig_J":        round(float(sig_J), 4),
+        "rmse_vol_pts": round(float(np.sqrt(best_val) * 100), 2),
+        "n_quotes":     len(df),
+    }
+
+
+def calibrate_bates(
+    market_df,
+    S0: float,
+    r: float,
+    q: float,
+    heston_init: Optional[dict] = None,
+) -> dict:
+    """
+    Calibrate Bates model parameters (v0, kappa, theta, gamma, rho, lam, mu_J, sig_J)
+    to market implied vols. Warm-starts from Heston calibration if provided.
+
+    WHY WARM-START FROM HESTON:
+        Bates has 8 parameters vs Heston's 5. Starting from a calibrated Heston
+        solution and adding jump params (lam, mu_J, sig_J) near zero avoids the
+        optimizer getting lost in the full 8D space.
+
+    Args:
+        market_df:    DataFrame with moneyness, ttm_years, impliedVolatility.
+        S0:           Spot price.
+        r:            Risk-free rate.
+        q:            Dividend yield.
+        heston_init:  Dict of calibrated Heston params (v0, kappa, theta, gamma, rho).
+
+    Returns:
+        Dict: {v0, kappa, theta, gamma, rho, lam, mu_J, sig_J, rmse_vol_pts,
+               feller_satisfied, n_quotes}
+    """
+    from app.vol_surface import bs_implied_vol
+
+    df = market_df.dropna(subset=["impliedVolatility"])
+    df = df[(df["ttm_years"] >= 0.1) & (df["ttm_years"] <= 2.0)]
+    if len(df) > 80:
+        df = df.sample(80, random_state=42)
+
+    m_arr  = df["moneyness"].values
+    t_arr  = df["ttm_years"].values
+    iv_arr = df["impliedVolatility"].values
+
+    def objective(params):
+        v0_, kappa_, theta_, gamma_, rho_, lam_, mu_J_, sig_J_ = params
+        feller_pen = 0.0
+        if kappa_ * theta_ < 0.5 * gamma_ ** 2:
+            feller_pen = 500 * (0.5 * gamma_ ** 2 - kappa_ * theta_) ** 2
+        errors = []
+        for m, t, iv_mkt in zip(m_arr, t_arr, iv_arr):
+            try:
+                price = bates_call_price(
+                    S0, m*S0, t, r, q,
+                    v0_, kappa_, theta_, gamma_, rho_, lam_, mu_J_, sig_J_
+                )
+                iv_model = bs_implied_vol(price, S0, m*S0, t, r, q)
+                if iv_model is not None and iv_model > 0:
+                    errors.append((iv_model - iv_mkt) ** 2)
+                else:
+                    errors.append(0.25)
+            except Exception:
+                errors.append(0.25)
+        return (np.mean(errors) if errors else 999.0) + feller_pen
+
+    bounds = [
+        (0.001, 0.5),    # v0
+        (0.1, 10.0),     # kappa
+        (0.001, 0.5),    # theta
+        (0.05, 1.5),     # gamma
+        (-0.99, -0.01),  # rho
+        (0.0, 5.0),      # lam
+        (-0.5, 0.1),     # mu_J
+        (0.01, 0.5),     # sig_J
+    ]
+
+    # Warm-start from Heston if available, otherwise use defaults
+    if heston_init:
+        x0 = [
+            heston_init.get("v0", 0.04),
+            heston_init.get("kappa", 1.5),
+            heston_init.get("theta", 0.04),
+            heston_init.get("gamma", 0.3),
+            heston_init.get("rho", -0.7),
+            0.5,    # lam: start low
+            -0.05,  # mu_J: typical small negative
+            0.10,   # sig_J
+        ]
+    else:
+        x0 = [0.04, 1.5, 0.04, 0.3, -0.7, 0.5, -0.05, 0.10]
+
+    best_params = x0
+    best_val = objective(x0)
+
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            res = minimize(
+                objective, x0, method="L-BFGS-B", bounds=bounds,
+                options={"maxiter": 300, "ftol": 1e-8},
+            )
+        if res.fun < best_val:
+            best_val = res.fun
+            best_params = list(res.x)
+    except Exception:
+        pass
+
+    v0, kappa, theta, gamma, rho, lam, mu_J, sig_J = best_params
+    return {
+        "v0":              round(float(v0), 6),
+        "kappa":           round(float(kappa), 4),
+        "theta":           round(float(theta), 6),
+        "gamma":           round(float(gamma), 4),
+        "rho":             round(float(rho), 4),
+        "lam":             round(float(lam), 4),
+        "mu_J":            round(float(mu_J), 4),
+        "sig_J":           round(float(sig_J), 4),
+        "rmse_vol_pts":    round(float(np.sqrt(best_val) * 100), 2),
+        "feller_satisfied": bool(kappa * theta > 0.5 * gamma ** 2),
+        "n_quotes":        len(df),
+    }
