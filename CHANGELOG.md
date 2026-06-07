@@ -4,6 +4,49 @@ All notable changes to the AutoCallable Analytics Platform are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 Versioning follows [Semantic Versioning](https://semver.org/): patch (0.0.X) for bug fixes, minor (0.X.0) for new features, major (X.0.0) for architecture changes.
 
+## [0.5.2] — 2026-06-07
+
+### Fixed
+- **`app/components/sidebar.py`** — Comprehensive persistence fix (all settings now persist across page navigation):
+  - **Root cause 1 (snapshot date)**: Snapshot selectbox previously stored an integer *index*
+    in `session_state["snapshot_idx"]`. When the snapshot list changed (new files added, or
+    cloud-only OneDrive files inconsistently visible), the stored index went out-of-range and
+    Streamlit silently reset to position 0. Fix: store the date-key string (e.g. "20260606_1200")
+    in `session_state["snapshot_key_stored"]`. String keys are immune to list reordering.
+  - **Root cause 2 (all widgets)**: 15 widgets (sliders, toggles, select_slider) passed an
+    explicit `value=` or positional default arg alongside `key=`. In Streamlit 1.58 this causes
+    edge-case resets when the stored value equals a boundary, or when the options list changes.
+    Fix: removed ALL `value=`/`index=` args from every keyed widget. Widgets now read exclusively
+    from `session_state`, which is pre-populated by `_ensure_sidebar_defaults()`.
+  - **Root cause 3 (r / S0 initialization)**: `r` and `S0` were re-initialized from market data
+    on every render via a fragile `if "r" not in session_state` check. Fix: a single sentinel key
+    `r_initialized` is set once so market-data defaults are applied exactly once per session.
+  - `_ensure_sidebar_defaults()` now covers every keyed widget (21 keys total).
+  - Added guard clauses: if stored `snapshot_key_stored` or `security_name` no longer appear in
+    the current options (file deleted, custom security cleared), fall back gracefully to the first valid option.
+
+### Added
+- **`app/components/sidebar.py`** — Sidebar reorganization (Task #21, partial):
+  - New section order: ① Data → ② Product → ③ Vol Model → ④ Model Params → ⑤ MC → ⑥ FDM
+  - Volatility Model selector moved UP to section ③ (before Heston params), so only relevant
+    params are visible — Heston params are hidden when Flat or Local Vol is selected
+  - Inline term-sheet preview (one caption line) below the security selectbox
+  - Link to Product Builder page (✏️ Build a custom structure)
+  - Custom securities from `session_state["custom_securities"]` appear in security dropdown
+    prefixed with ✏️
+
+- **`app/pages/06_Product_Builder.py`** — Custom Product Builder page (Task #20, complete):
+  - Full form for defining a custom autocallable: name, structure type (phoenix / step_down / digital),
+    maturity, observation frequency, call barrier, knock-in barrier, coupon barrier, coupon rate or
+    digital coupon, notional, step-down schedule (for step_down type), protection type
+  - Live payoff diagram that updates instantly as form params change (no "Run" button needed)
+  - Key metrics panel: maturity, observation count, max autocall payoff, max KI loss
+  - Observation schedule table with effective barrier per date (step-down aware)
+  - Expandable payoff formula panel with LaTeX-style notation per structure type
+  - Save button stores the product in `session_state["custom_securities"]` and switches the
+    sidebar security dropdown to the new product automatically
+  - Delete selector for removing saved custom products
+
 ## [0.5.1] — 2026-06-07
 
 ### Added
