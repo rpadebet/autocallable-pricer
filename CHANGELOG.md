@@ -4,6 +4,17 @@ All notable changes to the AutoCallable Analytics Platform are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 Versioning follows [Semantic Versioning](https://semver.org/): patch (0.0.X) for bug fixes, minor (0.X.0) for new features, major (X.0.0) for architecture changes.
 
+## [0.3.3] — 2026-06-06
+
+### Fixed
+- **`app/vol_surface.py` line 277**: `RectBivariateSpline.__call__` with scalar inputs returns shape `(1,1)` array, not a scalar — `float()` raised "only 0-dimensional arrays can be converted to Python scalars". Fixed by casting clamp inputs to `float()` and indexing result with `[0, 0]`.
+- **`app/pages/05_Scenarios.py` line 98**: `terminal_payoff()` requires `knocked_in: bool` positional argument that was missing. Fixed by inferring knock-in status from whether the final spot is below the protection barrier (`s < protection_barrier * S_ref`) — the standard convention for payoff diagrams.
+
+### Test Results
+**66 / 66 PASSED**
+
+---
+
 ## [0.3.2] — 2026-06-06
 
 ### Added

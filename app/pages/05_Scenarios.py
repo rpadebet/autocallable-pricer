@@ -95,7 +95,12 @@ with tab1:
 
     # Compute payoff across a range of final spot levels
     spot_range = np.linspace(S0 * 0.30, S0 * 1.50, 500)
-    payoffs = np.array([ac.terminal_payoff(s, r=r) for s in spot_range])
+    # knocked_in=True when final spot < protection barrier — standard payoff
+    # diagram convention: if you end below the barrier, assume it was hit.
+    payoffs = np.array([
+        ac.terminal_payoff(s, knocked_in=(s < ac.protection_barrier * ac.S_ref), r=r)
+        for s in spot_range
+    ])
     moneyness = spot_range / ac.S_ref
 
     # Identify regime boundaries
