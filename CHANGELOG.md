@@ -4,6 +4,79 @@ All notable changes to the AutoCallable Analytics Platform are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 Versioning follows [Semantic Versioning](https://semver.org/): patch (0.0.X) for bug fixes, minor (0.X.0) for new features, major (X.0.0) for architecture changes.
 
+## [0.5.10] — 2026-06-07
+
+### Fixed
+
+- **`app/pde_pricer.py` — `continuous_autocall_closedform()`** — Function was returning `None`
+  because the final 8 lines of its body were missing (OneDrive file truncation). The last stored
+  line was `expected_life = p_cross * expected_call_time + p_n` (truncated mid-variable). Added:
+  ```
+  expected_life = p_cross * expected_call_time + p_no_cross * T
+  pv_coupons    = coupon_pa * notional * expected_life * exp(-r * expected_life / 2.0)
+  price         = pv_call + pv_no_call + pv_coupons
+  return float(np.clip(price, 0.0, notional * (1.0 + coupon_pa * T)))
+  ```
+  This unblocked `test_closedform_finite_positive` which was failing with TypeError from
+  `np.isfinite(None)`. Result for Phoenix Autocall params (S0=5600, σ=0.18, T=2y): **$1,160**.
+  Also restored the full 792-line file from the 754-line FUSE-truncated version. **59/59 tests now pass.**
+
+- **`app/pages/02_Pricer.py`** — "Run All Pricers" required two clicks to clear the
+  "settings have changed" warning banner. Root cause: `st.session_state["pricer_last_run_fp"]`
+  was updated mid-script, but Streamlit does not re-evaluate widgets or banners until the next
+  full script run. The fingerprint comparison at the top of the script was still reading the old
+  value, so the warning persisted after the first click. Fix: added `st.rerun()` immediately after
+  the fingerprint is stored. The rerun re-executes the script with the new fingerprint already in
+  session_state → banner does not appear → button returns to idle. Pricers do NOT re-run on the
+  forced rerun because `st.button()` evaluates to `False` after the first click.
+
+- **`app/components/sidebar.py`** — Bates jump-diffusion default parameters were too conservative
+  (`lam_j=0.10, mu_j=-0.05, sig_j=0.10`), producing near-zero jump impact and making the Bates
+  price indistinguishable from the Heston price. Changed to `lam_j=0.50, mu_j=-0.15, sig_j=0.25`
+  (0.5 jumps/yr, −15% mean jump, 25% jump vol). These values produce a visible and financially
+  meaningful price difference vs. Heston, making the comparison informative during the demo.
+
+### Performance (continued from v0.5.8 — stale bytecode issue resolved)
+
+- **Root cause discovered**: Prior session's edits to `pde_pricer.py`, `mc_survival.py`, and
+  `vol_surface.py` updated the Windows files correctly, but Python was still executing the old
+  list-comprehension bytecode. The OneDrive FUSE mount showed the same mtime as the cached `.pyc`
+  files (sync lag), so Python's mtime check did not detect a change and kept using stale bytecode.
+  Proof: `pyc_baked_mtime == source_mtime` both = 1780808850. Fixed by `touch`ing all three source
+  files to force mtime advancement → Python recompiled from source → prior fixes took effect.
+
+- **`app/vol_surface.py`** — Added `dupire_local_vol_grid(m_axis, T_axis)` method. Evaluates the
+  Dupire formula for an entire (moneyness × TTM) grid using 4 vectorised C-level
+  `RectBivariateSpline.ev()` calls and one vectorised `_bs_vec()` pass, replacing 1,000 sequential
+  Python `dupire_local_vol()` calls. Returns `np.ndarray` of shape `(nT, nM)`. Values clamped to
+  `[0.05, 1.0]`. Uses `scipy.special.ndtr` (C-backed Φ(x)) instead of `scipy.stats.norm.cdf`
+  for ~10× faster normal CDF evaluation. Grid build time: **0.001s** for a 40×25 grid.
+
+- **`app/pde_pricer.py`** — Replaced `np.vectorize(lambda m, t: dupire_local_vol(m, t))(M_g, T_g)`
+  with `vol_surface.dupire_local_vol_grid(m_axis, t_axis)` in `_price_local_vol()`.
+
+- **`app/mc_standard.py`** — Same replacement in `_build_local_vol_interp()`.
+
+- **`app/mc_survival.py`** — Same replacement in `_build_local_vol_interp()`.
+
+### Timing (10K paths, real SPX Jun 6 data, Phoenix Autocall, Heston vol)
+- `dupire_local_vol_grid` (40×25): **0.001s** (was ~0.3s per call × 1,000 calls = 300s)
+- FDM (150×100, Heston): **0.02s**
+- MC Standard: **0.12s** → $948.59 ± $1.68
+- Survival MC: **8.14s** → $927.21 ± $0.62
+- Total: **~8.3s** (was 5+ minutes)
+
+### Known Issues (not fixed in this session)
+- **FD local vol price = $1500 (numerical blow-up)**: `_price_local_vol` uses an explicit FD
+  scheme in physical time space. With local vol σ up to 1.0, the Courant number
+  `σ² · dt / dx² ≈ 27 >> 0.5` → scheme is unconditionally unstable. Fix requires switching to
+  Crank-Nicolson or raising N_tau to ~5,000+. Heston/Bates FD pricing is unaffected (σ is bounded
+  and grid is well-conditioned).
+- **Survival MC Python loop**: `price()` still uses a Python for-loop over paths (~8s for 10K).
+  Vectorisation would require significant refactor. Not in scope for this session.
+
+---
+
 ## [0.5.9] — 2026-06-07
 
 ### Fixed
