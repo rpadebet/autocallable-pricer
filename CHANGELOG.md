@@ -4,6 +4,42 @@ All notable changes to the AutoCallable Analytics Platform are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 Versioning follows [Semantic Versioning](https://semver.org/): patch (0.0.X) for bug fixes, minor (0.X.0) for new features, major (X.0.0) for architecture changes.
 
+## [0.5.8] — 2026-06-07
+
+### Fixed (Performance)
+- **`app/mc_survival.py`** — `MCSurvivalPricer` was calling `vol_surface.dupire_local_vol()`
+  directly inside the simulation loop (once per path × per observation date = 80,000 calls at
+  ~300μs each ≈ 30s for N=10K). Applied the same pre-built `RegularGridInterpolator` pattern
+  already present in `MCStandardPricer`: build a 40×25 grid once in `__init__` (~1,000 calls,
+  ~0.3s), then use the C-backed interpolator for all subsequent lookups (~5μs per call).
+  Changes: added `_build_local_vol_interp()` method + `self._local_vol_interp` field; rewrote
+  `_get_sigma_local()` to use the fast interpolator path with a slow fallback for safety.
+
+- **`app/pde_pricer.py`** — `FDPricer._price_local_vol()` was calling `dupire_local_vol()` via
+  a Python list comprehension at every time step for every grid node (N_x × N_tau ≈ 20,000 calls
+  at ~300μs each ≈ 6s). Pre-built the same `RegularGridInterpolator` at the top of the method
+  (one-time cost), then replaced the per-step list comprehension with a vectorised `np.stack`
+  batch query (~50μs per step regardless of N_x).
+
+- **`app/vol_surface.py`** — `dupire_local_vol()` was computing 8 calls to the inner `C(m, t)`
+  function for only 4 unique (moneyness, time) points — each of `C(m, T)`, `C(m+dK, T)`, and
+  `C(m-dK, T)` was evaluated twice. Cached the 4 unique evaluations (`C_0T`, `C_pT`, `C_mT`,
+  `C_0dT`) and reused them across all three numerical derivatives. Reduces per-call cost by ~50%
+  with no change in output values.
+
+### Performance Impact
+Expected overall speedup for Dupire Local Vol pricing: **~42s → ~2s** (comparable to Heston/Bates).
+- Grid build one-time cost: ~0.3s (shared by MC + FDM)
+- MCSurvival simulation: ~30s → ~0.5s
+- FDM time-step loop: ~6s → ~0.05s
+- dupire_local_vol per-call: ~300μs → ~150μs (halved by C() caching)
+
+### Test Results
+**59 / 59 PASSED** (test_pde_pricer.py, test_mc_pricers.py, test_payoffs.py).
+test_heston.py skipped in sandbox — pre-existing OneDrive sync lag; unrelated to this session.
+
+---
+
 ## [0.5.7] — 2026-06-07
 
 ### Added

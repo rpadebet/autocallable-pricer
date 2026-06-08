@@ -350,19 +350,28 @@ class VolSurface:
             iv = self.implied_vol(m, t)
             return bs_call(S, m * S, t, self.r, self.q, iv)
 
-        # Numerical derivatives
+        # Cache the 4 unique (moneyness, time) evaluations needed for all three
+        # numerical derivatives, rather than calling C() 8 times.
+        # WHY: each C() call invokes implied_vol() + bs_call() (~50μs combined).
+        # Original code called C(moneyness, T) THREE times and C(moneyness+dK, T)
+        # and C(moneyness-dK, T) each TWICE, totalling 8 calls. With caching: 4 calls.
+        # At the grid-build level (1K Dupire calls), this saves ~2K C() calls (~100ms).
+        C_0T  = C(moneyness,      T)        # centre point — shared by dCdT, d²C/dK², C_val
+        C_pT  = C(moneyness + dK, T)        # K+ point    — shared by dCdK and d²C/dK²
+        C_mT  = C(moneyness - dK, T)        # K- point    — shared by dCdK and d²C/dK²
+        C_0dT = C(moneyness,      T + dT)   # forward time — used only by dCdT
+
+        # Numerical derivatives built from the 4 cached evaluations above
         # dC/dT (forward difference in T)
-        dCdT = (C(moneyness, T + dT) - C(moneyness, T)) / dT
+        dCdT = (C_0dT - C_0T) / dT
 
         # dC/dK (central difference in moneyness)
-        dCdK = (C(moneyness + dK, T) - C(moneyness - dK, T)) / (2 * dK * S)
+        dCdK = (C_pT - C_mT) / (2 * dK * S)
 
         # d²C/dK² (second derivative in moneyness)
-        d2CdK2 = (
-            C(moneyness + dK, T) - 2 * C(moneyness, T) + C(moneyness - dK, T)
-        ) / (dK * S) ** 2
+        d2CdK2 = (C_pT - 2 * C_0T + C_mT) / (dK * S) ** 2
 
-        C_val = C(moneyness, T)
+        C_val = C_0T
 
         # Dupire formula numerator and denominator
         numerator = dCdT + (self.r - self.q) * K * dCdK + self.q * C_val

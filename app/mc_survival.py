@@ -125,6 +125,52 @@ class MCSurvivalPricer:
         # Risk-neutral GBM drift for flat vol
         self._mu = r - q - 0.5 * sigma * sigma
 
+        # Pre-build local vol interpolator once (same pattern as MCStandardPricer).
+        # WHY: dupire_local_vol() costs ~300μs per call (8 C() evaluations with scipy).
+        # For N=10K paths × 8 obs dates = 80K calls → ~30s of Python overhead.
+        # Building a 40×25 grid once (~1K calls, ~0.3s) then using the C-backed
+        # RegularGridInterpolator cuts simulation cost to ~0.5s total.
+        self._local_vol_interp = None
+        if vol_model == "local" and vol_surface is not None:
+            self._local_vol_interp = self._build_local_vol_interp(vol_surface)
+
+    # -----------------------------------------------------------------------
+    # Local vol grid builder (mirrors MCStandardPricer._build_local_vol_interp)
+    # -----------------------------------------------------------------------
+
+    def _build_local_vol_interp(self, vol_surface):
+        """
+        Pre-compute a Dupire local vol grid and return a fast RegularGridInterpolator.
+
+        WHY THIS EXISTS HERE TOO:
+            MCSurvivalPricer calls _get_sigma_local() once per path per obs date.
+            For N=10K paths × 8 obs dates that is 80,000 dupire_local_vol() calls
+            at ~300μs each ≈ 30s. Building a 40×25 (moneyness × time) grid once
+            (~1,000 calls, ~0.3s) and switching to RegularGridInterpolator lookups
+            reduces the simulation cost to ~0.5s — a ~60× speedup.
+
+            The grid dimensions and range are identical to MCStandardPricer so
+            both pricers share the same surface representation.
+
+        Returns:
+            RegularGridInterpolator keyed on (t_axis, m_axis) → local vol.
+            Scalar query: interp([[t, m]]) returns array of shape (1,).
+            Extrapolation uses boundary values (fill_value=None).
+        """
+        from scipy.interpolate import RegularGridInterpolator
+        m_axis = np.linspace(0.40, 1.80, 40)
+        max_t = self.ac.maturity_years + 0.05
+        t_axis = np.linspace(0.01, max_t, 25)
+        M, T_g = np.meshgrid(m_axis, t_axis)
+        # np.vectorize is still a Python loop, but runs only once at init time.
+        # 25×40 = 1,000 Dupire evaluations total.
+        LV = np.vectorize(lambda m, t: vol_surface.dupire_local_vol(m, t))(M, T_g)
+        interp = RegularGridInterpolator(
+            (t_axis, m_axis), LV,
+            method="linear", bounds_error=False, fill_value=None,
+        )
+        return interp
+
     # -----------------------------------------------------------------------
     # Sigma helpers (dispatch based on vol_model)
     # -----------------------------------------------------------------------
@@ -132,14 +178,29 @@ class MCSurvivalPricer:
     def _get_sigma_local(self, s: float, t: float) -> float:
         """
         Return local vol sigma(s, t) from the Dupire surface.
+
         WHY: Local vol captures the strike/term structure of market implied vols.
              Using it here makes the survival MC consistent with the calibrated surface.
+
+        Fast path (preferred): uses the pre-built RegularGridInterpolator built in
+        __init__. One scipy C-extension call, ~5μs.
+
+        Slow path (fallback): calls dupire_local_vol() directly, ~300μs. Only reached
+        if vol_surface was not provided at construction time.
         """
-        if self.vol_surface is None:
-            return self.sigma
         moneyness = float(np.clip(s / self.S0, 0.40, 1.80))
         t_clamp = float(np.clip(t, 0.01, self.ac.maturity_years + 0.05))
-        return self.vol_surface.dupire_local_vol(moneyness, t_clamp)
+        if self._local_vol_interp is not None:
+            # Fast path: pre-built grid → single C-backed interpolation call
+            pts = np.array([[t_clamp, moneyness]])
+            return float(np.clip(self._local_vol_interp(pts)[0], 0.05, 1.0))
+        # Slow fallback (vol_surface provided but no interp built — should not occur
+        # under normal usage since __init__ builds the interp whenever vol_model="local")
+        if self.vol_surface is None:
+            return self.sigma
+        return float(np.clip(
+            self.vol_surface.dupire_local_vol(moneyness, t_clamp), 0.05, 1.0
+        ))
 
     def _advance_heston_variance(self, v_t: float, dt: float) -> float:
         """

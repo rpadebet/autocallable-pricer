@@ -580,9 +580,26 @@ class FDPricer:
 
         # --- Pre-compute local vol grid for fast vectorised lookup ---
         # We build a sigma array of shape (N_x,) at each time step.
-        # Pre-compute on (x_axis, t_axis) grid to avoid repeated vol surface calls.
+        # Build a RegularGridInterpolator ONCE here so the inner loop can query
+        # all N_x grid nodes in a single vectorised call instead of N_x × N_tau
+        # individual dupire_local_vol() calls (~300μs each → ~6s total).
+        # One-time grid build: 40×25 = 1,000 Dupire calls (~0.3s). Then the inner
+        # loop does N_tau vectorised batch queries (~50μs each → ~5ms total).
         S_ax = self.S_axis                         # shape (N_x,)
         moneyness_ax = S_ax / self.vol_surface.S0  # relative to vol surface spot
+
+        from scipy.interpolate import RegularGridInterpolator as _RGI
+        _m_axis = np.linspace(0.40, 1.80, 40)
+        _t_axis = np.linspace(0.01, self.ac.maturity_years + 0.05, 25)
+        _M_g, _T_g = np.meshgrid(_m_axis, _t_axis)
+        # np.vectorize iterates in Python but runs only once — 1,000 Dupire calls total.
+        _LV_g = np.vectorize(
+            lambda m, t: self.vol_surface.dupire_local_vol(m, t)
+        )(_M_g, _T_g)
+        _lv_interp = _RGI(
+            (_t_axis, _m_axis), _LV_g,
+            method="linear", bounds_error=False, fill_value=None,
+        )
 
         # Physical backward-time grid: T steps from t=T (maturity) to t=0
         # We match N_tau time steps but in physical time, not tau-space.
@@ -623,13 +640,15 @@ class FDPricer:
                     obs_processed[i] = True
 
             # --- Local vol at each grid node for this time step ---
-            # Clamp moneyness and time to valid surface range
+            # Clamp moneyness and time to valid surface range, then query all N_x
+            # nodes in one vectorised batch via the pre-built interpolator.
+            # WHY VECTORISED: the original list comprehension called dupire_local_vol()
+            # N_x times per step (N_x × N_tau = 20K total calls at ~300μs each ≈ 6s).
+            # One RegularGridInterpolator batch call takes ~50μs regardless of N_x.
             t_q = float(np.clip(t_current, 0.01, self.ac.maturity_years + 0.05))
             m_q = np.clip(moneyness_ax, 0.40, 1.80)
-            sigma_n = np.array([
-                self.vol_surface.dupire_local_vol(float(m), t_q) for m in m_q
-            ])  # shape (N_x,)
-            sigma_n = np.clip(sigma_n, 0.05, 1.0)
+            _pts = np.stack([np.full(self.N_x, t_q), m_q], axis=1)  # (N_x, 2)
+            sigma_n = np.clip(_lv_interp(_pts).astype(float), 0.05, 1.0)  # (N_x,)
 
             # --- Explicit FD update in log-price space ---
             dx = self.dx
