@@ -1239,8 +1239,6 @@ def calibrate_bates(
     """
     from app.vol_surface import bs_implied_vol
 
-    from app.vol_surface import bs_implied_vol
-
     df = market_df.dropna(subset=["impliedVolatility"])
     df = df[(df["ttm_years"] >= 0.1) & (df["ttm_years"] <= 2.0)]
     df = df[(df["moneyness"] >= 0.80) & (df["moneyness"] <= 1.20)]
