@@ -348,27 +348,6 @@ with nav6:
 
 st.divider()
 
-# ── Concept Guide link ───────────────────────────────────────────────────────
-st.markdown("### 📖 Concept Guide")
-st.markdown(
-    "New to autocallables or any of the models? "
-    "The **Concept Guide** explains every feature in plain English — "
-    "no formulas, just analogies, what to click, and what to look for."
-)
-
-_GUIDE_URL = "https://htmlpreview.github.io/?https://raw.githubusercontent.com/rpadebet/autocallable-pricer/main/AutoCallable_Concept_Guide.html"
-col_g1, col_g2 = st.columns([4, 1])
-with col_g1:
-    st.markdown(
-        f"📄 **[AutoCallable Concept Guide]({_GUIDE_URL})** — open in any browser "
-        "for a full tutorial covering products, vol models, pricing methods, "
-        "Greeks, and a step-by-step demo walkthrough."
-    )
-with col_g2:
-    st.link_button("📖 Open Guide", _GUIDE_URL, use_container_width=True)
-
-st.divider()
-
 # ── Technical references footer ──
 with st.expander("📄 Technical References"):
     st.markdown("""
