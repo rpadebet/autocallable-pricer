@@ -355,12 +355,17 @@ st.markdown(
     "The **Concept Guide** explains every feature in plain English — "
     "no formulas, just analogies, what to click, and what to look for."
 )
-st.info(
-    "📄 **AutoCallable_Concept_Guide.html** — open this file in any browser "
-    "for a full tutorial covering products, vol models, pricing methods, Greeks, "
-    "and a step-by-step demo walkthrough.",
-    icon="📖",
-)
+
+_GUIDE_URL = "https://raw.githubusercontent.com/rpadebet/autocallable-pricer/main/AutoCallable_Concept_Guide.html"
+col_g1, col_g2 = st.columns([4, 1])
+with col_g1:
+    st.markdown(
+        f"📄 **[AutoCallable Concept Guide]({_GUIDE_URL})** — open in any browser "
+        "for a full tutorial covering products, vol models, pricing methods, "
+        "Greeks, and a step-by-step demo walkthrough."
+    )
+with col_g2:
+    st.link_button("📖 Open Guide", _GUIDE_URL, use_container_width=True)
 
 st.divider()
 
