@@ -356,7 +356,7 @@ st.markdown(
     "no formulas, just analogies, what to click, and what to look for."
 )
 
-_GUIDE_URL = "https://raw.githubusercontent.com/rpadebet/autocallable-pricer/main/AutoCallable_Concept_Guide.html"
+_GUIDE_URL = "https://htmlpreview.github.io/?https://raw.githubusercontent.com/rpadebet/autocallable-pricer/main/AutoCallable_Concept_Guide.html"
 col_g1, col_g2 = st.columns([4, 1])
 with col_g1:
     st.markdown(
