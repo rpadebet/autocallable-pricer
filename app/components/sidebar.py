@@ -250,20 +250,20 @@ def render_sidebar(page_name: str = "") -> dict:
 
         col_r, col_q = st.columns(2)
         with col_r:
-            # NO value= — widget reads from session_state["r"] set above
             r = st.number_input(
                 "r (risk-free)",
                 min_value=0.0, max_value=0.20,
                 step=0.001, format="%.3f",
+                value=st.session_state.get("r", 0.045),
                 key="r",
                 help="Continuously compounded annual rate. Default from snapshot (^IRX).",
             )
         with col_q:
-            # NO value= — widget reads from session_state["q"] = 0.014 (set in _ensure_sidebar_defaults)
             q = st.number_input(
                 "q (div yield)",
                 min_value=0.0, max_value=0.10,
                 step=0.001, format="%.3f",
+                value=st.session_state.get("q", 0.014),
                 key="q",
                 help="SPX dividend yield. ~1.4% long-run average.",
             )
@@ -295,11 +295,11 @@ def render_sidebar(page_name: str = "") -> dict:
         sec_key = sec_name_display.replace("✏️ ", "", 1) if sec_name_display.startswith("✏️ ") else sec_name_display
         sec_params = custom_secs.get(sec_key) or get_security(sec_key)
 
-        # S0 — NO value= here either; session_state["S0"] was set above from market data
         S0 = st.number_input(
             "Reference Spot (S₀)",
             min_value=100.0, max_value=20000.0,
             step=10.0, format="%.1f",
+            value=st.session_state.get("S0", 5500.0),
             key="S0",
             help="SPX reference level at trade date. Set from snapshot on first load.",
         )
@@ -356,11 +356,11 @@ def render_sidebar(page_name: str = "") -> dict:
         st.markdown("**④ Model Parameters**")
 
         # ── ④a: Flat vol — always shown (used by FD as fallback, and flat MC)
-        # NO value= — reads from session_state["sigma_flat"]
         sigma_flat = st.number_input(
             "Flat Vol σ (BS / FD fallback)",
             min_value=0.01, max_value=1.0,
             step=0.01, format="%.3f",
+            value=st.session_state.get("sigma_flat", 0.20),
             key="sigma_flat",
             help="Used by FD pricer and flat-vol MC. For Heston/Bates MC the variance SDE is used; this acts as fallback.",
         )
@@ -528,6 +528,7 @@ def render_sidebar(page_name: str = "") -> dict:
             )
             seed = st.number_input(
                 "Random Seed", min_value=0, max_value=9999, step=1,
+                value=st.session_state.get("seed", 42),
                 key="seed",
                 help="Fixed seed for reproducible runs.",
             )

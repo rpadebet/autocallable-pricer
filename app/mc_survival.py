@@ -269,10 +269,6 @@ class MCSurvivalPricer:
         """
         if dt < 1e-10:
             return 0.5
-        # Guard: local vol surface can return 0 at grid boundaries despite clamping.
-        # Avoid divide-by-zero; treat vol≈0 as no information (50% survival prob).
-        if sigma_t * math.sqrt(dt) < 1e-10:
-            return 0.5
         mu_t = self.r - self.q - 0.5 * sigma_t ** 2
         z = (math.log(barrier / s) - mu_t * dt) / (sigma_t * math.sqrt(dt))
         return _ncdf(z)
@@ -381,11 +377,7 @@ class MCSurvivalPricer:
         """Vectorised survival probability for an array of spot levels."""
         from scipy.special import ndtr
         mu_t = self.r - self.q - 0.5 * sigma_t ** 2
-        denom = sigma_t * np.sqrt(dt)
-        # Guard: avoid divide-by-zero when local vol ≈ 0 at grid boundaries.
-        safe_denom = np.where(denom < 1e-10, 1.0, denom)
-        z = np.where(denom < 1e-10, 0.0,
-                     (np.log(barrier / s) - mu_t * dt) / safe_denom)
+        z = (np.log(barrier / s) - mu_t * dt) / (sigma_t * np.sqrt(dt))
         return ndtr(z)
 
     def _sample_below_vec(self, s: np.ndarray, p_j: np.ndarray, dt: float,

@@ -524,14 +524,6 @@ class FDPricer:
         # Compute call probabilities (approximate analytical from autocallable.py)
         call_probs = self.ac.call_probabilities(self.sigma, self.r, self.q)
 
-        # Guard: NaN/inf means numerical instability (Courant violation, bad params).
-        # np.clip(NaN, ...) is numpy-version-dependent — raise explicitly instead.
-        if not np.isfinite(price):
-            raise RuntimeError(
-                f"FD pricer produced non-finite price ({price}). "
-                "Likely Courant instability — increase N_tau or reduce N_x."
-            )
-
         result = FDResult(
             price=float(np.clip(price, 0, self.notional * 1.5)),
             call_probs=call_probs,
@@ -653,7 +645,7 @@ class FDPricer:
             # --- Autocall BC at observation dates ---
             # Apply when we cross an observation date going backward in time
             for i, t_obs in enumerate(obs_dates):
-                if (not obs_processed[i]) and (t_current <= t_obs <= t_axis_phys[step]):
+                if (not obs_processed[i]) and (t_current <= t_obs < t_axis_phys[step]):
                     barrier = self.ac.call_barrier_at_period(i) * self.S_ref
                     call_pv = (self.ac.redemption_at_call * self.ac.notional
                                + self.ac.coupon_per_period())
@@ -702,14 +694,6 @@ class FDPricer:
         idx = int(np.clip(idx, 1, self.N_x - 2))
         alpha_i = (self.S_ref - S_ax[idx - 1]) / (S_ax[idx] - S_ax[idx - 1])
         price = (1 - alpha_i) * V[idx - 1] + alpha_i * V[idx]
-
-        # Guard: same NaN check as flat vol path — local vol grids can produce
-        # instability if the Courant auto-correction missed a spike in max_sigma.
-        if not np.isfinite(price):
-            raise RuntimeError(
-                f"Local vol FD pricer produced non-finite price ({price}). "
-                "Check max local vol and N_tau."
-            )
 
         # Call probabilities use flat sigma (analytical formula from Paper 1)
         call_probs = self.ac.call_probabilities(self.sigma, self.r, self.q)
@@ -782,19 +766,15 @@ def continuous_autocall_closedform(
         Approximate price using the continuous-monitoring closed form.
     """
     from scipy.stats import norm
+    from scipy.stats import norm
 
     B = call_barrier * S0  # Barrier level in spot space
     T = maturity_years
     nu = r - q - 0.5 * sigma ** 2
 
     if B <= S0:
-        # Already above or at barrier: immediate call at t=0.
-        # WHY DISCOUNTED: returning notional*(1+coupon*T) ignores time value.
-        # Use expected_call_time = T/2 (same approximation as the main path).
-        expected_call_time = T / 2.0
-        return (notional * np.exp(-r * expected_call_time)
-                + coupon_pa * notional * expected_call_time
-                * np.exp(-r * expected_call_time / 2.0))
+        # Already above or at barrier: immediate call
+        return notional * (1 + coupon_pa * T)
 
     # Log-ratio of barrier to spot
     log_BS = np.log(B / S0)
