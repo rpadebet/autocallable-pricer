@@ -243,12 +243,6 @@ def run_pricers(params, ac, show_paths, track_conv):
                 vol_surface=vol_surface,
                 local_vol_interp=local_vol_interp,
             )
-            # For Heston/Bates: override call_prob_sigma to sqrt(v0) so the
-            # call probability table uses the same vol as the MC pricers,
-            # not the flat sigma passed to FDPricer (which falls back to flat).
-            if vol_model in ("heston", "bates") and heston_params:
-                import math as _math
-                fd.call_prob_sigma = _math.sqrt(heston_params.get("v0", params["sigma"] ** 2))
             results["fd"] = fd.price(return_grid=False)
         except Exception as e:
             results["fd_err"] = str(e)
@@ -734,19 +728,7 @@ with tab3:
 # ──────────────────────────────────────────────────────────────────────────────
 with tab4:
     st.subheader("Term Structure of Call Probabilities")
-    _cp_vol_model = params.get("vol_model", "flat")
-    _cp_sigma = fd_res.call_probs and params.get("sigma", 0.20)  # fallback
-    if _cp_vol_model in ("heston", "bates") and heston_params:
-        import math as _math
-        _eff_sigma = _math.sqrt(heston_params.get("v0", params["sigma"] ** 2))
-        _model_label = "Heston" if _cp_vol_model == "heston" else "Bates"
-        st.caption(
-            f"Analytical call probabilities using \u03c3\u209a\u209c\u209a = {_eff_sigma*100:.1f}% "
-            f"(√v\u2080 from {_model_label} calibration). "
-            "Exact model-consistent probabilities would require simulation."
-        )
-    else:
-        st.caption("FD-derived call probability at each observation date (analytical — no MC noise).")
+    st.caption("FD-derived call probability at each observation date (analytical — no MC noise).")
 
     if not fd_res or not fd_res.call_probs:
         st.info("FD pricing must succeed to show term structure.")

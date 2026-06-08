@@ -269,10 +269,6 @@ class MCSurvivalPricer:
         """
         if dt < 1e-10:
             return 0.5
-        # Guard: local vol surface can return 0 at grid boundaries despite clamping.
-        # Avoid divide-by-zero; treat vol≈0 as no information (50% survival prob).
-        if sigma_t * math.sqrt(dt) < 1e-10:
-            return 0.5
         mu_t = self.r - self.q - 0.5 * sigma_t ** 2
         z = (math.log(barrier / s) - mu_t * dt) / (sigma_t * math.sqrt(dt))
         return _ncdf(z)
@@ -316,20 +312,8 @@ class MCSurvivalPricer:
                 sigma_t = self.sigma
 
             elif self.vol_model == "local":
-                # Sub-stepping for local vol: break the obs interval into small
-                # steps where sigma is ~constant within each sub-step.
-                n_sub = max(1, round(dt * self.n_steps_per_year))
-                dt_sub = dt / n_sub
-                p_j = 1.0
-                for sub_step in range(n_sub):
-                    t_mid = t_prev + (sub_step + 0.5) * dt_sub
-                    sigma_sub = self._get_sigma_local(s, t_mid)
-                    p_j_sub = self._p_survive(s, barrier, dt_sub, sigma_sub)
-                    p_j *= p_j_sub
-                    if p_j_sub < 1e-10 or p_j < 1e-15:
-                        p_j = 0.0
-                        break
-                    s = self._sample_below(s, p_j_sub, dt_sub, sigma_sub)
+                # Query Dupire surface at current spot and calendar time
+                sigma_t = self._get_sigma_local(s, t_prev + 0.5 * dt)
 
             elif self.vol_model in ("heston", "bates"):
                 # Advance variance from t_prev to t_i using Euler-Maruyama sub-steps
@@ -342,8 +326,7 @@ class MCSurvivalPricer:
                 sigma_t = self.sigma  # fallback
 
             # --- Survival probability p_j ---
-            if self.vol_model != "local":
-                p_j = self._p_survive(s, barrier, dt, sigma_t)
+            p_j = self._p_survive(s, barrier, dt, sigma_t)
 
             # Bates: further reduce p_j by jump-crossing probability
             if self.vol_model == "bates":
@@ -365,9 +348,7 @@ class MCSurvivalPricer:
                 break
 
             # --- Sample next spot from truncated distribution ---
-            # SKIP for local vol — already sampled during sub-stepping above.
-            if self.vol_model != "local":
-                s = self._sample_below(s, p_j, dt, sigma_t)
+            s = self._sample_below(s, p_j, dt, sigma_t)
             L *= p_j
             if store and spots is not None:
                 spots.append(s)
@@ -396,11 +377,7 @@ class MCSurvivalPricer:
         """Vectorised survival probability for an array of spot levels."""
         from scipy.special import ndtr
         mu_t = self.r - self.q - 0.5 * sigma_t ** 2
-        denom = sigma_t * np.sqrt(dt)
-        # Guard: avoid divide-by-zero when local vol ≈ 0 at grid boundaries.
-        safe_denom = np.where(denom < 1e-10, 1.0, denom)
-        z = np.where(denom < 1e-10, 0.0,
-                     (np.log(barrier / s) - mu_t * dt) / safe_denom)
+        z = (np.log(barrier / s) - mu_t * dt) / (sigma_t * np.sqrt(dt))
         return ndtr(z)
 
     def _sample_below_vec(self, s: np.ndarray, p_j: np.ndarray, dt: float,
@@ -485,57 +462,24 @@ class MCSurvivalPricer:
             dt = t_i - t_prev
             barrier = self.ac.call_barrier_at_period(i) * self.S_ref
 
-            # Determine sigma_t and survival probability for active paths
+            # Determine sigma_t for active paths
             if self.vol_model == "flat":
                 sigma_t = np.full(N, self.sigma)
-                safe_s = np.where(active, s, self.S0)
-                safe_sigma = np.where(active, sigma_t, self.sigma)
-                p_j = self._p_survive_vec(safe_s, barrier, dt, safe_sigma)
-                # Sample next spot after probability computation (below)
-
             elif self.vol_model == "local":
-                # Sub-stepping for local vol: break the observation interval
-                # into n_sub small steps where sigma is ~constant within each
-                # sub-step.  Chains survival probabilities and samples paths.
-                n_sub = max(1, round(dt * self.n_steps_per_year))
-                dt_sub = dt / n_sub
-                p_j = np.ones(N)
-                for sub_step in range(n_sub):
-                    t_mid = t_prev + (sub_step + 0.5) * dt_sub
-                    sigma_sub = self._get_sigma_local_vec(s, t_mid)
-                    safe_s_sub = np.where(active, s, self.S0)
-                    safe_sigma_sub = np.where(active, sigma_sub, self.sigma)
-                    p_j_sub = self._p_survive_vec(safe_s_sub, barrier, dt_sub, safe_sigma_sub)
-
-                    # Accumulate survival probability P(stay below B through all sub-steps)
-                    p_j = np.where(active, p_j * p_j_sub, p_j)
-
-                    # Sample next spot for next sub-step (skip on last sub-step —
-                    # the final s after the loop is the spot at the obs date)
-                    still_active_sub = active & (p_j_sub >= 1e-10) & (L >= 1e-15)
-                    if still_active_sub.any():
-                        s_new = self._sample_below_vec(
-                            s[still_active_sub], p_j_sub[still_active_sub],
-                            dt_sub, sigma_sub[still_active_sub],
-                        )
-                        s[still_active_sub] = s_new
-
+                sigma_t = self._get_sigma_local_vec(s, t_prev + 0.5 * dt)
             elif is_heston_bates:
                 v_t = self._advance_heston_variance_vec(v_t, dt)
                 sigma_t = np.clip(np.sqrt(np.maximum(v_t, 0.0)), 0.02, 2.0)
-                safe_s = np.where(active, s, self.S0)
-                safe_sigma = np.where(active, sigma_t, self.sigma)
-                p_j = self._p_survive_vec(safe_s, barrier, dt, safe_sigma)
-
             else:
                 sigma_t = np.full(N, self.sigma)
-                safe_s = np.where(active, s, self.S0)
-                safe_sigma = np.where(active, sigma_t, self.sigma)
-                p_j = self._p_survive_vec(safe_s, barrier, dt, safe_sigma)
+
+            # Survival probability for active paths
+            safe_s = np.where(active, s, self.S0)
+            safe_sigma = np.where(active, sigma_t, self.sigma)
+            p_j = self._p_survive_vec(safe_s, barrier, dt, safe_sigma)
 
             # Bates: further reduce p_j by jump-crossing probability
             if self.vol_model == "bates":
-                safe_s = np.where(active, s, self.S0)
                 p_j = p_j * self._jump_survival_correction_vec(safe_s, barrier, dt)
                 p_j = np.clip(p_j, 0.0, 1.0)
 
@@ -547,9 +491,8 @@ class MCSurvivalPricer:
             # Deactivate paths with negligible survival weight
             still_active = active & (p_j >= 1e-10) & (L >= 1e-15)
 
-            # Sample next spot for still-active paths from truncated distribution.
-            # SKIP for local vol — already sampled during sub-stepping above.
-            if still_active.any() and self.vol_model != "local":
+            # Sample next spot for still-active paths from truncated distribution
+            if still_active.any():
                 s_new = self._sample_below_vec(s[still_active], p_j[still_active],
                                                 dt, sigma_t[still_active])
                 s[still_active] = s_new
