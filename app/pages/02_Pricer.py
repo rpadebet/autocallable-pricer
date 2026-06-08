@@ -756,9 +756,10 @@ with tab4:
     st.subheader("Term Structure of Call Probabilities")
     _cp_vol_model = params.get("vol_model", "flat")
     _cp_sigma = fd_res.call_probs and params.get("sigma", 0.20)  # fallback
-    if _cp_vol_model in ("heston", "bates") and heston_params:
+    _heston_params = params.get("heston_params", {})
+    if _cp_vol_model in ("heston", "bates") and _heston_params:
         import math as _math
-        _eff_sigma = _math.sqrt(heston_params.get("v0", params["sigma"] ** 2))
+        _eff_sigma = _math.sqrt(_heston_params.get("v0", params["sigma"] ** 2))
         _model_label = "Heston" if _cp_vol_model == "heston" else "Bates"
         st.caption(
             f"Analytical call probabilities using \u03c3\u209a\u209c\u209a = {_eff_sigma*100:.1f}% "
