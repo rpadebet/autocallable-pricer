@@ -1,0 +1,639 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AutoCallable Analytics Platform — Concept Guide</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+         background: #f8f9fa; color: #1a1a2e; font-size: 15px; line-height: 1.7; }
+
+  /* ── Layout ── */
+  .container { max-width: 960px; margin: 0 auto; padding: 40px 24px 80px; }
+
+  /* ── Header ── */
+  .hero { background: linear-gradient(135deg, #1a1a2e 0%, #16213e 60%, #0f3460 100%);
+          color: white; padding: 48px 40px; border-radius: 12px; margin-bottom: 40px; }
+  .hero h1 { font-size: 2rem; font-weight: 700; margin-bottom: 8px; }
+  .hero .subtitle { opacity: 0.75; font-size: 1rem; }
+  .hero .tags { margin-top: 20px; display: flex; flex-wrap: wrap; gap: 8px; }
+  .tag { background: rgba(255,255,255,0.12); border-radius: 20px;
+         padding: 4px 14px; font-size: 0.78rem; }
+
+  /* ── Section headers ── */
+  .part-header { display: flex; align-items: center; gap: 14px;
+                 margin: 48px 0 24px; padding-bottom: 12px;
+                 border-bottom: 3px solid currentColor; }
+  .part-header .part-num { width: 42px; height: 42px; border-radius: 50%;
+                            display: flex; align-items: center; justify-content: center;
+                            font-weight: 700; font-size: 1.1rem; color: white; flex-shrink: 0; }
+  .part-header h2 { font-size: 1.4rem; font-weight: 700; }
+
+  /* ── Color themes per part ── */
+  .theme-product   { color: #e67e22; }
+  .theme-vol       { color: #2980b9; }
+  .theme-pricing   { color: #27ae60; }
+  .theme-greeks    { color: #8e44ad; }
+  .theme-demo      { color: #c0392b; }
+  .bg-product  { background: #e67e22; }
+  .bg-vol      { background: #2980b9; }
+  .bg-pricing  { background: #27ae60; }
+  .bg-greeks   { background: #8e44ad; }
+  .bg-demo     { background: #c0392b; }
+
+  /* ── Concept cards ── */
+  .card { background: white; border-radius: 10px; padding: 28px 32px;
+          margin-bottom: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+  .card h3 { font-size: 1.1rem; font-weight: 700; margin-bottom: 14px; }
+  .card h3 .icon { margin-right: 8px; }
+
+  /* ── Three-column layout inside cards ── */
+  .cols { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; }
+  @media (max-width: 680px) { .cols { grid-template-columns: 1fr; } }
+
+  .col-label { font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
+               letter-spacing: 0.08em; color: #888; margin-bottom: 6px; }
+  .col-content { font-size: 0.92rem; }
+
+  /* ── Callout / analogy box ── */
+  .analogy { background: #fffbf0; border-left: 4px solid #f39c12;
+             border-radius: 0 6px 6px 0; padding: 12px 16px; margin: 14px 0;
+             font-size: 0.9rem; font-style: italic; color: #555; }
+
+  /* ── "Try it" badge ── */
+  .try-it { display: inline-block; background: #1a1a2e; color: white;
+            border-radius: 6px; padding: 2px 10px; font-size: 0.75rem;
+            font-weight: 600; margin-right: 6px; vertical-align: middle; }
+  .page-link { font-size: 0.82rem; color: #555; }
+  .arrow { color: #ccc; margin: 0 4px; }
+
+  /* ── Highlight chip ── */
+  .chip { display: inline-block; border-radius: 4px; padding: 1px 8px;
+          font-size: 0.75rem; font-weight: 600; margin-right: 4px; }
+  .chip-blue   { background: #ebf5fb; color: #2980b9; }
+  .chip-green  { background: #eafaf1; color: #27ae60; }
+  .chip-orange { background: #fef5e7; color: #e67e22; }
+  .chip-purple { background: #f5eef8; color: #8e44ad; }
+  .chip-red    { background: #fdedec; color: #c0392b; }
+
+  /* ── Product structure table ── */
+  table { width: 100%; border-collapse: collapse; font-size: 0.87rem; margin-top: 12px; }
+  th { background: #f0f0f0; padding: 8px 12px; text-align: left; font-weight: 600; }
+  td { padding: 7px 12px; border-bottom: 1px solid #eee; }
+  tr:last-child td { border-bottom: none; }
+
+  /* ── Demo steps ── */
+  .step { display: flex; gap: 14px; margin-bottom: 16px; align-items: flex-start; }
+  .step-num { width: 28px; height: 28px; border-radius: 50%; background: #c0392b;
+              color: white; display: flex; align-items: center; justify-content: center;
+              font-weight: 700; font-size: 0.85rem; flex-shrink: 0; }
+  .step-body { font-size: 0.92rem; }
+  .step-body strong { display: block; margin-bottom: 2px; }
+
+  /* ── Footer ── */
+  .footer { text-align: center; color: #aaa; font-size: 0.8rem; margin-top: 60px; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<!-- ══════════════════════════════════════════════════════
+     HERO
+══════════════════════════════════════════════════════ -->
+<div class="hero">
+  <h1>AutoCallable Analytics Platform</h1>
+  <p class="subtitle">Concept Guide — What Every Feature Does, in Plain English</p>
+  <div class="tags">
+    <span class="tag">Structured Products</span>
+    <span class="tag">Volatility Surfaces</span>
+    <span class="tag">Monte Carlo Simulation</span>
+    <span class="tag">Finite Difference Pricing</span>
+    <span class="tag">Variance Reduction</span>
+    <span class="tag">Options Greeks</span>
+    <span class="tag">Heston / Bates / Merton Models</span>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════
+     PART 1 — AUTOCALLABLE PRODUCTS
+══════════════════════════════════════════════════════ -->
+<div class="part-header theme-product">
+  <div class="part-num bg-product">1</div>
+  <h2>Autocallable Structured Products</h2>
+</div>
+
+<div class="card">
+  <h3><span class="icon">🏦</span>What Is an Autocallable?</h3>
+  <div class="analogy">
+    Think of it like a savings CD with a surprise early exit option. The bank says: "Give us $1,000.
+    We'll pay you 8% a year. But if the stock market is above where it started at any check-in date,
+    we'll give you your $1,000 back early — plus coupon for the time you held it.
+    If markets crash hard (say, below 75%), you share in the loss at the end."
+  </div>
+  <div class="cols">
+    <div>
+      <div class="col-label">What it is</div>
+      <div class="col-content">A structured note that <strong>automatically redeems early</strong> (autocalls) if the underlying index hits a trigger level on a scheduled observation date. Investors get an above-market coupon in exchange for taking on downside risk.</div>
+    </div>
+    <div>
+      <div class="col-label">Key mechanics</div>
+      <div class="col-content">
+        <strong>Call barrier:</strong> If index ≥ this % of starting level → product redeems early + coupon<br><br>
+        <strong>Coupon barrier:</strong> If index ≥ this level → coupon is paid (even if not called)<br><br>
+        <strong>Knock-in barrier:</strong> If index falls below this → investor bears losses at maturity
+      </div>
+    </div>
+    <div>
+      <div class="col-label">Try it in the app</div>
+      <div class="col-content">
+        <span class="try-it">Pricer</span> <span class="page-link">Select a security from the sidebar. The Term Sheet card shows all barriers and coupons visually.</span><br><br>
+        <span class="try-it">Scenarios</span> <span class="page-link">See the payoff diagram — drag the sliders to see how price changes with spot, vol, and barrier levels.</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <h3><span class="icon">📋</span>The Four Pre-Built Structures</h3>
+  <table>
+    <tr><th>Name</th><th>Structure</th><th>Call Trigger</th><th>Coupon</th><th>Protection</th></tr>
+    <tr>
+      <td><strong>Phoenix Autocall</strong></td>
+      <td>Standard single-asset</td>
+      <td>100% of start</td>
+      <td>8% p.a.</td>
+      <td>KI at 75%</td>
+    </tr>
+    <tr>
+      <td><strong>Worst-Of Autocall</strong></td>
+      <td>Basket of 3 indices (SPX/NDX/RUT)</td>
+      <td>100% of start</td>
+      <td>12% p.a.</td>
+      <td>KI at 70%</td>
+    </tr>
+    <tr>
+      <td><strong>Step-Down Barrier</strong></td>
+      <td>Barrier declines each quarter</td>
+      <td>100% → 95% → 90%</td>
+      <td>10% p.a.</td>
+      <td>KI at 75%</td>
+    </tr>
+    <tr>
+      <td><strong>Digital Autocall</strong></td>
+      <td>Fixed dollar payoff at call</td>
+      <td>105% of start</td>
+      <td>$50 fixed</td>
+      <td>80% capital floor</td>
+    </tr>
+  </table>
+  <p style="margin-top:14px; font-size:0.87rem; color:#666;">
+    <span class="chip chip-orange">Worst-Of</span> pays the highest coupon because the investor is exposed to whichever of the three indices performs the worst — it's riskier.<br>
+    <span class="chip chip-orange">Step-Down</span> is more likely to autocall over time because the trigger gets easier to hit as the barrier falls.
+  </p>
+</div>
+
+<div class="card">
+  <h3><span class="icon">🔧</span>Custom Product Builder</h3>
+  <div class="cols">
+    <div>
+      <div class="col-label">What it does</div>
+      <div class="col-content">Lets you define your own autocallable from scratch — choose the structure type, set barriers, coupon, maturity, and observation frequency. Saved products appear in the sidebar and can be priced on the Pricer page.</div>
+    </div>
+    <div>
+      <div class="col-label">Live preview</div>
+      <div class="col-content">As you change any parameter, the payoff diagram on the right updates instantly. You can see exactly what the investor gets at maturity for every possible spot level — no "Run" button required.</div>
+    </div>
+    <div>
+      <div class="col-label">Try it</div>
+      <div class="col-content">
+        <span class="try-it">Product Builder</span> <span class="page-link">Try sliding the knock-in barrier from 75% to 60% — notice the "risk zone" (red shaded area) on the payoff chart shrinks. Then save the product and price it on the Pricer page.</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════
+     PART 2 — VOLATILITY SURFACE
+══════════════════════════════════════════════════════ -->
+<div class="part-header theme-vol">
+  <div class="part-num bg-vol">2</div>
+  <h2>The Volatility Surface</h2>
+</div>
+
+<div class="card">
+  <h3><span class="icon">📈</span>Implied Volatility &amp; the Vol Smile</h3>
+  <div class="analogy">
+    Imagine options are insurance policies for a stock. A policy protecting against a small drop costs roughly the same as a policy protecting against a large drop — right? No. In reality, options protecting against crashes are disproportionately expensive. This difference, when you "back out" a volatility number that explains each price, creates a curve called the "volatility smile."
+  </div>
+  <div class="cols">
+    <div>
+      <div class="col-label">What it is</div>
+      <div class="col-content">The Black-Scholes model assumes stock volatility is constant. But real market option prices imply <strong>different volatility levels at different strikes and maturities</strong>. Plotting these implied vols creates a 3D surface — the vol surface.</div>
+    </div>
+    <div>
+      <div class="col-label">Why it matters for autocallables</div>
+      <div class="col-content">Autocallables have barrier conditions at specific strikes and maturities. Using the wrong vol (e.g., a flat 20% when the market implies 28% at the relevant strike) misprices the product. The vol surface lets the pricer use the "right" volatility for each scenario.</div>
+    </div>
+    <div>
+      <div class="col-label">Try it</div>
+      <div class="col-content">
+        <span class="try-it">Vol Surface</span> <span class="page-link">Tab "3D Implied Vol." Rotate the surface. Notice that far out-of-the-money puts (left of ATM) have higher implied vol than at-the-money options — this is the equity "skew."</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <h3><span class="icon">🌀</span>Heston Model — "Volatility Has Its Own Mood Swings"</h3>
+  <div class="analogy">
+    In real markets, volatility itself changes — it spikes when markets panic and calms down in quiet periods. The Heston model says: "Let's treat volatility like another random process with its own mean, its own speed of reverting to normal, and its own randomness."
+  </div>
+  <div class="cols">
+    <div>
+      <div class="col-label">What it models</div>
+      <div class="col-content">Volatility follows a "rubber band" process — it can stretch away from its average level but is always pulled back. The key parameters are: <strong>κ</strong> (how strongly it snaps back), <strong>θ</strong> (the long-run average vol level), <strong>γ</strong> (how wild vol-of-vol is), and <strong>ρ</strong> (correlation between stock moves and vol moves).</div>
+    </div>
+    <div>
+      <div class="col-label">ρ (rho) is important</div>
+      <div class="col-content">For equities, when markets fall sharply, vol tends to spike. This negative correlation (<strong>ρ ≈ −0.70</strong>) creates the skew seen in the vol surface. Heston captures this naturally — flat-vol models cannot.</div>
+    </div>
+    <div>
+      <div class="col-label">Try it</div>
+      <div class="col-content">
+        <span class="try-it">Vol Surface</span> <span class="page-link">Tab "Heston Overlay." Click "Calibrate Heston" — the model fits its 5 parameters to market prices. The dashed model surface should lie close to the solid market surface. Red patches = fit error.</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <h3><span class="icon">💥</span>Merton Jump Diffusion — "Markets Occasionally Have Car Crashes"</h3>
+  <div class="analogy">
+    Standard models assume stock prices move like a person taking tiny random steps all day. The Merton model adds the possibility that occasionally a bus runs the person over — a sudden large drop (or rise) that no amount of small steps could explain. These are "jumps."
+  </div>
+  <div class="cols">
+    <div>
+      <div class="col-label">What it adds</div>
+      <div class="col-content">On top of normal day-to-day random moves, adds a Poisson process — random "events" (crashes, gap moves) that arrive at rate <strong>λ</strong> (e.g., 0.1 = roughly one crash per 10 years), each with a jump size drawn from a normal distribution.</div>
+    </div>
+    <div>
+      <div class="col-label">Why it matters</div>
+      <div class="col-content">Jumps create a steeper vol skew for short maturities. For autocallables with barrier conditions, a sudden gap down through the knock-in barrier is exactly the kind of risk jumps model. Ignoring jumps underprices this tail risk.</div>
+    </div>
+    <div>
+      <div class="col-label">Try it</div>
+      <div class="col-content">
+        <span class="try-it">Vol Surface</span> <span class="page-link">Tab "Model Comparison." Click "Calibrate All Models." Compare Merton's RMSE vs Heston — if Merton fits better at short maturities, jump risk dominates there.</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <h3><span class="icon">🔀</span>Bates Model — "Heston + Jumps Combined"</h3>
+  <div class="analogy">
+    If Heston is "vol has moods" and Merton is "crashes happen," Bates says both are true simultaneously. Markets have mean-reverting vol AND occasional crash events. It's more realistic but also has 8 parameters to calibrate — with great power comes great complexity.
+  </div>
+  <div class="cols">
+    <div>
+      <div class="col-label">What it is</div>
+      <div class="col-content">Combines Heston's stochastic variance process with Merton's Poisson jump component. The result fits real option surfaces more accurately, especially the short-term smile that Heston alone can struggle with.</div>
+    </div>
+    <div>
+      <div class="col-label">Trade-off</div>
+      <div class="col-content">More parameters → better fit, but harder to calibrate and prone to overfitting sparse data. The app warms up Bates calibration from the Heston solution to speed convergence. Check the Feller condition — if violated, vol can go negative (bad).</div>
+    </div>
+    <div>
+      <div class="col-label">Try it</div>
+      <div class="col-content">
+        <span class="try-it">Vol Surface</span> <span class="page-link">Model Comparison tab → Calibrate All. The smile chart shows all three models vs. market at 1y and 2y maturities. Bates usually wins on RMSE but is the most expensive to compute.</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <h3><span class="icon">🗺️</span>Dupire Local Volatility — "A Different Volatility at Every Point"</h3>
+  <div class="analogy">
+    Instead of one overall volatility personality (flat), or a random personality (Heston), Dupire asks: "What exact volatility at each specific (price, time) point would make all option prices match perfectly?" It's like drawing a custom weather map for every location and time rather than assuming the same weather everywhere.
+  </div>
+  <div class="cols">
+    <div>
+      <div class="col-label">What it does</div>
+      <div class="col-content">Mathematically "inverts" the observed option prices to extract a volatility that is a function of both the stock price level (S) and time (t). Written as σ(S,t). When used in Monte Carlo, each simulated stock path uses the volatility appropriate for where the stock is right now.</div>
+    </div>
+    <div>
+      <div class="col-label">How it's computed</div>
+      <div class="col-content">Uses Dupire's formula on a smooth interpolation of the implied vol surface. The app builds a 40×25 grid of σ(S,t) values at trade, then uses fast interpolation during simulation so the pricer doesn't slow down.</div>
+    </div>
+    <div>
+      <div class="col-label">Try it</div>
+      <div class="col-content">
+        <span class="try-it">Vol Surface</span> <span class="page-link">Tab "Dupire Local Vol." Compare it to the implied vol surface on the left — local vol looks "flatter" in the strike dimension because it averages over future paths. Steep areas = high vol of vol.</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════
+     PART 3 — PRICING METHODS
+══════════════════════════════════════════════════════ -->
+<div class="part-header theme-pricing">
+  <div class="part-num bg-pricing">3</div>
+  <h2>Pricing Methods</h2>
+</div>
+
+<div class="card">
+  <h3><span class="icon">⬅️</span>Finite Difference Method (FDM) — "Solving Backwards From Maturity"</h3>
+  <div class="analogy">
+    Imagine you know what the prize is at the end of a maze (the payoff at maturity). FDM works backwards — from the known ending, it figures out what the value must be at each earlier point. It's like filling in a spreadsheet from right to left, row by row.
+  </div>
+  <div class="cols">
+    <div>
+      <div class="col-label">How it works</div>
+      <div class="col-content">Sets up a grid: stock price (vertical) × time (horizontal). Starting from maturity (where we know the payoff), it uses a mathematical update rule at each time step, working backwards to the starting date. The value at today's stock price is the product's fair value.</div>
+    </div>
+    <div>
+      <div class="col-label">Two schemes</div>
+      <div class="col-content">
+        <strong>Explicit:</strong> Simple update, but requires small time steps to stay stable (like a bicycle that tips over if you go too fast around corners).<br><br>
+        <strong>Crank-Nicolson:</strong> Blends the current and next time step. More accurate and stable for the same grid size — costs slightly more per step but worth it.
+      </div>
+    </div>
+    <div>
+      <div class="col-label">Try it</div>
+      <div class="col-content">
+        <span class="try-it">FDM Viz</span> <span class="page-link">Watch the "heatmap" — brighter colors are higher value. See how value evolves backward in time, with the autocall barrier appearing as a sharp edge (values above the barrier get "called away"). Use the time-slice animation to watch it sweep.</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <h3><span class="icon">🎲</span>Standard Monte Carlo — "Rolling Dice 10,000 Times"</h3>
+  <div class="analogy">
+    To find the average outcome of a card game, you could calculate it exactly (hard), or just play the game 10,000 times and take the average (easy). Monte Carlo is the second approach — simulate thousands of possible stock price paths and average the payoffs.
+  </div>
+  <div class="cols">
+    <div>
+      <div class="col-label">How it works</div>
+      <div class="col-content">Generates thousands of random stock price "futures" using the vol model selected (flat, local, Heston, or Bates). For each path, checks if the autocall triggered on any observation date and computes the discounted payoff. Averages all payoffs to get the price.</div>
+    </div>
+    <div>
+      <div class="col-label">The problem: noise</div>
+      <div class="col-content">With 1,000 paths the estimate can be off by several dollars. With 100,000 paths it's much more accurate but takes 10× longer. The <strong>confidence interval</strong> (shown as a band around the price line) tells you how reliable the estimate is.</div>
+    </div>
+    <div>
+      <div class="col-label">Try it</div>
+      <div class="col-content">
+        <span class="try-it">Pricer</span> <span class="page-link">Convergence chart: watch how the price estimate and confidence band narrow as N (paths) increases. With Antithetic on vs. off — notice the band narrows faster with antithetic.</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <h3><span class="icon">🎯</span>One-Step Survival Monte Carlo — "Loaded Dice for Better Accuracy"</h3>
+  <div class="analogy">
+    In standard MC, paths that hit the autocall barrier "die" early and are discarded. This wastes a lot of computation. Survival MC asks: "Instead of letting paths randomly hit the barrier, what if we mathematically account for the probability of hitting it at each step, and then only simulate paths that survive?" You get the same answer with far fewer paths.
+  </div>
+  <div class="cols">
+    <div>
+      <div class="col-label">The key idea</div>
+      <div class="col-content">At each observation date, instead of asking "did we hit the barrier?" and stopping, it computes the <strong>probability</strong> of hitting the barrier and factors that into the payoff mathematically. All paths run to maturity — no early stops. The result: smoother estimates with smaller error bands.</div>
+    </div>
+    <div>
+      <div class="col-label">Why it's better</div>
+      <div class="col-content">The variance (noise) of the estimate drops dramatically. Especially important for products near the barrier where many standard MC paths hit and get terminated, making the estimate unreliable. Survival MC gets the same accuracy with 5–10× fewer paths.</div>
+    </div>
+    <div>
+      <div class="col-label">Try it</div>
+      <div class="col-content">
+        <span class="try-it">Pricer</span> <span class="page-link">Convergence chart — Standard MC vs Survival MC side by side. At the same N, Survival MC's confidence band (lighter colored region) is visibly narrower. This IS the variance reduction claim from the paper.</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <h3><span class="icon">🔀</span>Antithetic Variates — "Every Path Gets a Mirror Twin"</h3>
+  <div class="analogy">
+    If you flip a coin 10 times and get 7 heads, you know you've been "lucky" and the estimate is biased upward. Antithetic variates say: for every random sequence used to simulate a path, also simulate the exact opposite sequence. Average the two. The lucky and unlucky paths cancel each other out, giving a better estimate for free.
+  </div>
+  <div class="cols">
+    <div>
+      <div class="col-label">How it works</div>
+      <div class="col-content">For every random number z used to simulate a path, also run a path using −z. The two paths are "mirrors" of each other. Their payoffs are averaged before being combined with other pairs. Roughly halves the standard error for the same number of paths.</div>
+    </div>
+    <div>
+      <div class="col-label">Limitation</div>
+      <div class="col-content">Only works for the flat-vol (Black-Scholes) model. With Heston or Bates, the variance SDE is non-linear — pairing a path with its mirror no longer guarantees they cancel properly. The app auto-disables antithetic for non-flat models.</div>
+    </div>
+    <div>
+      <div class="col-label">Try it</div>
+      <div class="col-content">
+        <span class="try-it">Sidebar ⑤</span> <span class="page-link">Toggle "Antithetic Variates" on/off. With Flat vol, run the Pricer and compare Standard MC standard error (shown in the price tab) — it should drop by ~√2 with antithetic on.</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <h3><span class="icon">🔢</span>Call Probability Table — "When Is This Thing Likely to Autocall?"</h3>
+  <div class="analogy">
+    Not all observation dates are equally likely to trigger the autocall. For a product with quarterly observations, the first quarter might have a 35% chance of calling (if markets are near the barrier), but by month 12, only 2% of paths are still alive and uncalled. The call probability table maps this out.
+  </div>
+  <div class="cols">
+    <div>
+      <div class="col-label">What it shows</div>
+      <div class="col-content">For each observation date: probability that the product <em>first</em> autocalls on that specific date (not on any earlier date). Sum of all probabilities = total autocall probability. Remainder = probability of running to maturity.</div>
+    </div>
+    <div>
+      <div class="col-label">How it's computed</div>
+      <div class="col-content">Uses the PDE/analytical approach from Paper 1 (Deng et al.) — exploits the joint lognormal distribution of returns between observation dates to compute exact probabilities without running a full Monte Carlo.</div>
+    </div>
+    <div>
+      <div class="col-label">Try it</div>
+      <div class="col-content">
+        <span class="try-it">Pricer</span> <span class="page-link">FDM tab → "Call Probability at Each Observation Date" table. Then go to Scenarios → same table. Try moving the spot slider toward the call barrier — watch the early call probabilities jump.</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════
+     PART 4 — GREEKS & STABLE DIFFERENTIATION
+══════════════════════════════════════════════════════ -->
+<div class="part-header theme-greeks">
+  <div class="part-num bg-greeks">4</div>
+  <h2>Greeks &amp; Stable Differentiation</h2>
+</div>
+
+<div class="card">
+  <h3><span class="icon">🌡️</span>What Are Greeks?</h3>
+  <div class="analogy">
+    If your house price goes up $1,000 for every 1% rise in local incomes, your house has a "Delta" of $1,000 per 1% income change. Greeks are exactly this — sensitivities. How much does the option value change if I move one input a tiny bit?
+  </div>
+  <div class="cols">
+    <div>
+      <div class="col-label">Delta (Δ)</div>
+      <div class="col-content">How much the product value changes if the stock moves $1. A Delta of 0.4 means: if SPX goes from 5,000 to 5,001, the product gains about $0.40. Traders use Delta to <strong>hedge</strong> — they hold a position in the stock equal in size to minus the Delta, so moves cancel out.</div>
+    </div>
+    <div>
+      <div class="col-label">Vega (ν)</div>
+      <div class="col-content">How much the product value changes if implied volatility moves 1 percentage point. Autocallables are typically <strong>short vega</strong> — they lose value when vol rises. Banks selling these products need to hedge their vega exposure in the options market.</div>
+    </div>
+    <div>
+      <div class="col-label">Try it</div>
+      <div class="col-content">
+        <span class="try-it">Greeks</span> <span class="page-link">Look at the "Delta smile" chart — Delta vs. spot level. It's not a straight line, which means the hedge ratio changes as the stock moves. This non-linearity is called "Gamma."</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <h3><span class="icon">⚡</span>The Barrier Problem — Why Standard MC Greeks Are Unreliable</h3>
+  <div class="analogy">
+    Imagine you're trying to measure the height of a cliff edge by poking around with a stick. Right at the cliff edge, one inch forward versus one inch backward gives wildly different results (ground vs. air). Option barriers are the same — the payoff function has a "cliff edge" at the barrier, making numerical derivatives (Greeks) very noisy near it.
+  </div>
+  <div class="cols">
+    <div>
+      <div class="col-label">The problem</div>
+      <div class="col-content">Standard Monte Carlo computes Delta by: price at S₀+ε minus price at S₀−ε, divided by 2ε. But near the autocall barrier, different paths cross the barrier depending on which bump direction you use, causing the estimate to jump wildly between large positive and negative values.</div>
+    </div>
+    <div>
+      <div class="col-label">The Survival MC solution</div>
+      <div class="col-content">Because Survival MC analytically handles barrier crossing (no path ever "hits" the barrier — instead it computes the probability), the payoff function becomes smooth with respect to the starting spot. Bumping S₀ by ε gives reliable, smooth derivative estimates.</div>
+    </div>
+    <div>
+      <div class="col-label">Try it</div>
+      <div class="col-content">
+        <span class="try-it">Greeks</span> <span class="page-link">"Delta Stability" chart: left panel = Standard MC (spiky, unreliable near barrier), right panel = Survival MC (smooth, monotone). This IS the key selling point of the Alm et al. paper.</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════
+     PART 5 — DEMO WALKTHROUGH
+══════════════════════════════════════════════════════ -->
+<div class="part-header theme-demo">
+  <div class="part-num bg-demo">5</div>
+  <h2>Demo Walkthrough — How to Show Each Concept</h2>
+</div>
+
+<div class="card">
+  <h3><span class="icon">🎬</span>Recommended Demo Order (≈ 20 minutes)</h3>
+
+  <div class="step">
+    <div class="step-num">1</div>
+    <div class="step-body">
+      <strong>Home → Start with the big picture</strong>
+      Open the Home page. Explain that this is a single-asset (or basket) structured note. The sidebar controls everything — pick "Phoenix Autocall" and set the vol model to "Flat."
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num">2</div>
+    <div class="step-body">
+      <strong>Scenarios → Make the payoff intuitive</strong>
+      Go to Scenarios. Show the payoff diagram — point to the knock-in zone (red shading), the flat capital-return zone, and the horizontal autocall payoff line. Move the "Spot" what-if slider — watch the price update live.
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num">3</div>
+    <div class="step-body">
+      <strong>Pricer → Show all three pricing engines</strong>
+      Go to Pricer. Hit "Run All Pricers." All three price estimates (FDM, Standard MC, Survival MC) should converge to the same number — this validates they're all correct. Point to the path animation: show how paths either hit the call barrier (green dot) or run to maturity.
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num">4</div>
+    <div class="step-body">
+      <strong>Pricer → Variance reduction story</strong>
+      On the convergence chart, Standard MC's confidence band is wider than Survival MC's at the same N. This is the core result of the Alm et al. paper — explained visually without a single equation.
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num">5</div>
+    <div class="step-body">
+      <strong>Vol Surface → Market data and calibration</strong>
+      Go to Vol Surface. Show the 3D implied vol surface from real SPX data. Click "Calibrate Heston" — the Heston overlay shows how well the model fits. Then go to Model Comparison and run all three models. Compare RMSE. Explain: Bates fits better but at the cost of 8 parameters.
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num">6</div>
+    <div class="step-body">
+      <strong>Sidebar → Change vol model to Heston</strong>
+      In the sidebar, switch Volatility Model to "Heston." Go back to Pricer and rerun. The FD pricer falls back to flat vol, but the MC pricers now use the full Heston variance SDE. Compare the Heston price to the flat vol price — the difference shows the vol model matters.
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num">7</div>
+    <div class="step-body">
+      <strong>FDM Viz → Make the numerical method visible</strong>
+      Go to FDM Visualization. Show the heatmap of V(S, t) — the value evolves backward from maturity. The horizontal band where value suddenly drops is the call barrier. Use the time-slice slider to animate the backward sweep.
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num">8</div>
+    <div class="step-body">
+      <strong>Greeks → The punchline</strong>
+      Go to Greeks. Side-by-side Delta plots: Standard MC is spiky and unreliable near the barrier; Survival MC is smooth and monotone. This means a trader using standard MC for hedging would constantly over- or under-hedge — Survival MC solves this.
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <h3><span class="icon">🔑</span>Key Talking Points</h3>
+  <table>
+    <tr><th>Concept</th><th>One-line explanation</th><th>Proof point in the app</th></tr>
+    <tr>
+      <td>Vol surface</td>
+      <td>Market options imply different vols at different strikes — we use the real surface, not a flat number</td>
+      <td>3D implied vol surface on Vol Surface page, built from live SPX data</td>
+    </tr>
+    <tr>
+      <td>Heston</td>
+      <td>Volatility itself is random and mean-reverting — captures the equity skew naturally</td>
+      <td>Heston Overlay tab: model surface overlaid on market surface; calibrated RMSE shown</td>
+    </tr>
+    <tr>
+      <td>Variance reduction</td>
+      <td>Survival MC needs 5–10× fewer paths for the same accuracy because it never "wastes" a path</td>
+      <td>Convergence chart on Pricer: Standard vs Survival confidence bands at same N</td>
+    </tr>
+    <tr>
+      <td>Stable Greeks</td>
+      <td>Standard MC Greeks near barriers are unusable; Survival MC gives clean, monotone sensitivities</td>
+      <td>Delta stability chart on Greeks page: spiky vs smooth side by side</td>
+    </tr>
+    <tr>
+      <td>Bates over Heston</td>
+      <td>Short-dated skew is steeper than Heston can fit alone — adding jumps (Bates) explains it</td>
+      <td>Model Comparison tab: RMSE comparison + smile charts at 3m vs 1y tenor</td>
+    </tr>
+    <tr>
+      <td>Call probabilities</td>
+      <td>The product is most likely to call early; pricing must account for this path-dependence</td>
+      <td>Call Probability table on Pricer and Scenarios pages</td>
+    </tr>
+  </table>
+</div>
+
+<div class="footer">
+  AutoCallable Analytics Platform · Concept Guide · v0.5.16 · June 2026
+  <br>A learning and demonstration tool for autocallable structured product pricing
+</div>
+
+</div>
+</body>
+</html>
