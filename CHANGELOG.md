@@ -4,6 +4,21 @@ All notable changes to the AutoCallable Analytics Platform are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 Versioning follows [Semantic Versioning](https://semver.org/): patch (0.0.X) for bug fixes, minor (0.X.0) for new features, major (X.0.0) for architecture changes.
 
+## [0.5.9] — 2026-06-07
+
+### Fixed
+- **`app/components/sidebar.py`** — Default snapshot was always `snaps[-1]["key"]` (latest by
+  lexicographic filename sort = `20260610_0945`, a 164 KB synthetic placeholder). Fresh sessions
+  and reloaded sessions were silently pricing with synthetic data rather than the real Jun 6 SPX
+  options chain (`20260606_2238`, 1.6 MB). Added `_best_default_snapshot_key()` helper that reads
+  file sizes and selects the largest snapshot as the default. The real chain is ~10× larger than
+  the synthetic placeholders, so it is reliably identified. Falls back to latest-by-name if file
+  sizes cannot be read (e.g. cloud-only OneDrive files not yet synced).
+  Updated `_ensure_sidebar_defaults()` signature to accept `data_dir` and wired the call site in
+  `render_sidebar()` to pass `data_dir`. No change to session_state persistence logic.
+
+---
+
 ## [0.5.8] — 2026-06-07
 
 ### Fixed (Performance)

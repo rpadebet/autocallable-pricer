@@ -42,9 +42,47 @@ PERSISTENCE DESIGN:
         are immune to list reordering.
 """
 
+import os
 import streamlit as st
 from app.data_loader import list_available_snapshots, load_snapshot, get_spot_price, get_rfr, resolve_data_dir
 from app.components.securities import list_securities, get_security
+
+
+def _best_default_snapshot_key(snaps: list, data_dir: str) -> str:
+    """
+    Return the snapshot key for the largest CSV file in data_dir.
+
+    WHY LARGEST: Synthetic placeholder snapshots generated during development
+    are typically 170 KB (sparse). The real collected SPX options chain is 10× larger
+    (1.6 MB+) because it contains the full set of strikes and expiries. Defaulting
+    to the largest file ensures a fresh session opens with real market data, not a
+    synthetic placeholder.
+
+    Fallback: if file sizes can't be read (cloud-only files not yet downloaded),
+    returns the lexicographically last key (original behaviour).
+
+    Args:
+        snaps:    List of {key, label} dicts from list_available_snapshots().
+        data_dir: Absolute path to the sample_data directory.
+
+    Returns:
+        The key string (e.g. "20260606_2238") of the largest snapshot file.
+    """
+    if not snaps:
+        return ""
+    best_key = snaps[-1]["key"]   # original fallback: latest by filename
+    best_size = -1
+    for s in snaps:
+        path = os.path.join(data_dir, f"spx_options_{s['key']}.csv")
+        try:
+            sz = os.path.getsize(path)
+            if sz > best_size:
+                best_size = sz
+                best_key = s["key"]
+        except OSError:
+            # File not locally cached (OneDrive cloud-only); skip.
+            pass
+    return best_key
 
 
 @st.cache_data(show_spinner=False)
@@ -71,7 +109,7 @@ VOL_MODEL_OPTIONS = {
 }
 
 
-def _ensure_sidebar_defaults(snaps: list, pre_built: list) -> None:
+def _ensure_sidebar_defaults(snaps: list, pre_built: list, data_dir: str = "") -> None:
     """
     Pre-populate every session_state key used by a sidebar widget.
 
@@ -87,13 +125,19 @@ def _ensure_sidebar_defaults(snaps: list, pre_built: list) -> None:
     Args:
         snaps:     List of {key, label} dicts from list_available_snapshots().
         pre_built: List of pre-configured security names from list_securities().
+        data_dir:  Absolute path to sample_data/ — used to rank snapshots by size.
     """
     all_sec_names = pre_built + [f"✏️ {n}" for n in st.session_state.get("custom_securities", {})]
-    latest_snap_key = snaps[-1]["key"] if snaps else ""
+
+    # WHY LARGEST FILE: real SPX options chains are ~1.6 MB; synthetic placeholders
+    # generated during development are ~170 KB. Defaulting to the largest file
+    # ensures a fresh session loads real market data, not a synthetic placeholder.
+    # _best_default_snapshot_key() falls back to the last-by-name if sizes can't be read.
+    best_snap_key = _best_default_snapshot_key(snaps, data_dir) if data_dir else (snaps[-1]["key"] if snaps else "")
 
     defaults: dict = {
         # ① Market Data
-        "snapshot_key_stored": latest_snap_key,   # STRING key, not integer index
+        "snapshot_key_stored": best_snap_key,   # STRING key, not integer index
         "r":                   0.045,
         "q":                   0.014,
         # ② Product
@@ -158,7 +202,8 @@ def render_sidebar(page_name: str = "") -> dict:
 
         # Pre-populate ALL defaults before any widget is rendered.
         # This is the single call that guarantees persistence.
-        _ensure_sidebar_defaults(snaps, pre_built)
+        # Pass data_dir so the helper can rank snapshots by file size.
+        _ensure_sidebar_defaults(snaps, pre_built, data_dir=data_dir)
 
         # ── Snapshot selectbox ──────────────────────────────────────────────
         # WHY STRING KEY: we store the date-key string ("20260606_1200") instead
