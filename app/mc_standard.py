@@ -134,6 +134,7 @@ class MCStandardPricer:
         heston_params: Optional[dict] = None,
         jump_params: Optional[dict] = None,
         n_steps_per_year: int = 52,
+        local_vol_interp=None,
     ) -> None:
         self.ac = autocallable
         self.sigma = sigma
@@ -158,8 +159,9 @@ class MCStandardPricer:
         # Pre-build local vol interpolator once (avoids rebuilding during price())
         # WHY PRE-BUILD: dupire_local_vol() is slow per-call; vectorised grid lookup
         # is ~100× faster for the 10K path × 52-step simulation.
-        self._local_vol_interp = None
-        if vol_model == "local" and vol_surface is not None:
+        # If a pre-built interpolator is provided, use it (shared across pricers).
+        self._local_vol_interp = local_vol_interp
+        if vol_model == "local" and vol_surface is not None and local_vol_interp is None:
             self._local_vol_interp = self._build_local_vol_interp(vol_surface)
 
     # -----------------------------------------------------------------------

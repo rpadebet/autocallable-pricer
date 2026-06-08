@@ -182,6 +182,7 @@ class FDPricer:
         scheme: str = "explicit",
         vol_model: str = "flat",
         vol_surface=None,
+        local_vol_interp=None,
     ) -> None:
         self.ac = autocallable
         self.sigma = sigma
@@ -194,6 +195,7 @@ class FDPricer:
         self.scheme = scheme
         self.vol_model = vol_model
         self.vol_surface = vol_surface
+        self.local_vol_interp = local_vol_interp
 
         # The "strike equivalent" in the paper's change of variables
         # C = call_barrier * S_ref (the spot level that triggers the call)
@@ -579,29 +581,42 @@ class FDPricer:
         import numpy as np
 
         # --- Pre-compute local vol grid for fast vectorised lookup ---
-        # We build a sigma array of shape (N_x,) at each time step.
-        # Build a RegularGridInterpolator ONCE here so the inner loop can query
-        # all N_x grid nodes in a single vectorised call instead of N_x × N_tau
-        # individual dupire_local_vol() calls (~300μs each → ~6s total).
-        # One-time grid build: 40×25 = 1,000 Dupire calls (~0.3s). Then the inner
-        # loop does N_tau vectorised batch queries (~50μs each → ~5ms total).
+        # If a pre-built interpolator is provided (shared across pricers), use it.
+        # Otherwise build one here (fallback for standalone FDM usage).
         S_ax = self.S_axis                         # shape (N_x,)
         moneyness_ax = S_ax / self.vol_surface.S0  # relative to vol surface spot
 
-        from scipy.interpolate import RegularGridInterpolator as _RGI
-        _m_axis = np.linspace(0.40, 1.80, 40)
-        _t_axis = np.linspace(0.01, self.ac.maturity_years + 0.05, 25)
-        # Vectorised grid build: 4 C-level spline+BS calls replace 1,000 Python calls.
-        # dupire_local_vol_grid() returns shape (nT=25, nM=40) — matches RGI layout.
-        _LV_g = self.vol_surface.dupire_local_vol_grid(_m_axis, _t_axis)
-        _lv_interp = _RGI(
-            (_t_axis, _m_axis), _LV_g,
-            method="linear", bounds_error=False, fill_value=None,
-        )
+        if self.local_vol_interp is not None:
+            _lv_interp = self.local_vol_interp
+            _LV_g = None  # grid not needed — stability check uses max from shared grid
+        else:
+            from scipy.interpolate import RegularGridInterpolator as _RGI
+            _m_axis = np.linspace(0.40, 1.80, 40)
+            _t_axis = np.linspace(0.01, self.ac.maturity_years + 0.05, 25)
+            _LV_g = self.vol_surface.dupire_local_vol_grid(_m_axis, _t_axis)
+            _lv_interp = _RGI(
+                (_t_axis, _m_axis), _LV_g,
+                method="linear", bounds_error=False, fill_value=None,
+            )
+
+        # --- Stability check based on MAX local vol (not flat vol) ---
+        # The Courant condition must hold for the maximum sigma in the local vol
+        # surface, not just the flat vol used in __init__. Local vol can reach
+        # sigma=1.0 (clamped), which requires much finer time stepping.
+        if _LV_g is not None:
+            max_sigma = float(np.max(_LV_g))
+        else:
+            max_sigma = 1.0  # conservative upper bound when grid not available
+        dx = self.dx
+        dt_phys = self.T / self.N_tau
+        courant_local = (max_sigma ** 2) * dt_phys / (dx ** 2)
+        if courant_local > 0.5:
+            required_N_tau = int(np.ceil((max_sigma ** 2) * self.T / (0.4 * dx ** 2))) + 1
+            self.N_tau = required_N_tau
+            dt_phys = self.T / self.N_tau
 
         # Physical backward-time grid: T steps from t=T (maturity) to t=0
         # We match N_tau time steps but in physical time, not tau-space.
-        dt_phys = self.T / self.N_tau              # physical time step
         t_axis_phys = np.linspace(self.T, 0.0, self.N_tau + 1)  # T, T-dt, ..., 0
 
         # --- Terminal payoff at t=T ---

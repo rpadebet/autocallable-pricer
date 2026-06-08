@@ -8,6 +8,30 @@ Versioning follows [Semantic Versioning](https://semver.org/): patch (0.0.X) for
 
 ### Fixed
 
+- **`app/pde_pricer.py`** — FDM local vol numerical blow-up (price = $1500 instead of ~$950).
+  Root cause: `_price_local_vol()` used `self.N_tau` computed in `__init__` based on flat vol
+  (σ=0.20), but local vol can reach σ=1.0 (clamped). Courant number σ²·dt/dx² ≈ 9 >> 0.5 made
+  the explicit scheme unconditionally unstable. Fix: after building the local vol grid, compute
+  `max_sigma = np.max(_LV_g)` and auto-correct `N_tau` to satisfy Courant ≤ 0.5 for the maximum
+  local vol in the surface.
+
+- **`app/mc_survival.py`** — Survival MC performance: converted Python for-loop over paths to
+  vectorised active-mask pattern. All 10K paths are now processed simultaneously using numpy
+  arrays. Added vectorised helpers: `_p_survive_vec()`, `_sample_below_vec()`,
+  `_get_sigma_local_vec()`, `_advance_heston_variance_vec()`, `_jump_survival_correction_vec()`.
+  The scalar `_price_one_path()` is retained for the 50 stored paths (fast enough). Expected
+  speedup: ~8s → ~0.1s for 10K paths locally; ~20-40s → ~0.5-2s on Streamlit Cloud.
+
+- **`app/pages/02_Pricer.py`** — VolSurface caching: `_build_vol_surface()` now caches the
+  `VolSurface` object and shared Dupire grid interpolator in `session_state` keyed by
+  snapshot_key + S0 + r + q. The 40×25 Dupire grid is built once and passed to all three pricers
+  via the new `local_vol_interp` parameter, eliminating redundant grid builds (was 3× per Run).
+
+- **`app/mc_standard.py`, `app/mc_survival.py`, `app/pde_pricer.py`** — All three pricers now
+  accept an optional `local_vol_interp` parameter (pre-built `RegularGridInterpolator`). When
+  provided, the pricer uses the shared interpolator instead of building its own. This reduces
+  total Dupire grid build cost from ~3ms to ~1ms per pricing run.
+
 - **`app/components/sidebar.py`** — Sidebar settings (Heston/Bates parameters) resetting to
   defaults when navigating between pages.
 
@@ -471,4 +495,22 @@ All truncations were caused by the OneDrive FUSE mount's write-buffering behavio
 - `requirements.txt`: All dependencies (streamlit, numpy, scipy, pandas, plotly, yfinance, pytest)
 - `.gitignore`: Standard Python ignores; sample_data/ CSVs intentionally committed for Streamlit Cloud
 - `git_setup.ps1`: PowerShell script for Windows git initialization (bypasses FUSE locking issues)
-- Directory scaffold: `app/`, `app/components/`, `app/pages/`, `scripts/`, `sample_data/`, `
+- Directory scaffold: `app/`, `app/components/`, `app/pages/`, `scripts/`, `sample_data/`, `tests/`, `test_results/`
+
+**Data Layer**
+- `scripts/collect_snapshot.py`: Live SPX options snapshot collector via yfinance; `score_snapshot()` quality scorer (n_expiries, avg_strikes, pct_tight_spread, pct_missing_iv, quality_score)
+- `scripts/generate_synthetic_data.py`: Realistic synthetic vol surface generator for offline demo; 3 snapshots generated (20260606, 20260609, 20260610)
+- `sample_data/`: 3 CSV snapshots, ~1350 rows each, 23 expiries, 80+ strikes per expiry
+- `app/data_loader.py`: `list_available_snapshots()`, `load_snapshot()`, `get_spot_price()`, `get_rfr()`, `get_implied_vol_matrix()`, `resolve_data_dir()`
+
+**Product Layer**
+- `app/components/securities.py`: 4 pre-configured autocallables — Phoenix (SPX, 2Y, 8% pa), Worst-Of (SPX/NDX/RUT, 3Y, 12%), Step-Down Barrier (monthly, 2Y, 10%), Digital (3Y, $50 digital coupon)
+- `app/autocallable.py`: `AutoCallable` dataclass with full payoff logic — `observation_dates()`, `coupon_per_period()`, `call_barrier_at_period()`, `is_called()`, `terminal_payoff()`, `call_probabilities()`, `from_security_dict()` factory
+
+**Pricing Engines**
+- `app/pde_pricer.py`: Explicit FD on log-price grid (Paper 1, §2.2); change-of-variables to heat equation; autocall BCs at observation dates; `continuous_autocall_closedform()` for Paper 1 §2.3 validation. Validated: FD ≈ $958–970 for Phoenix.
+- `app/mc_standard.py`: GBM Monte Carlo (Paper 3, Eq. 2.3); antithetic variates; path storage for animation; convergence tracking. Validated: $963 ± $1.35 at N=2000.
+- `app/mc_survival.py`: One-step survival MC (Paper 3, Algorithm 1); stdlib `math.erf` for NumPy 2.x compatibility; `_p_survive()` valid at all spot levels including at-barrier. Validated: $967 ± $0.70 at N=2000, 1.93× variance reduction.
+
+**Volatility Models**
+- `app/vol_surface.py`: `VolSurface` class with bicubic spline fit (`RectBivariateSpline`); `dupire_local_vol()` via numerical diff

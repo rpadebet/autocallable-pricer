@@ -147,15 +147,42 @@ def _build_vol_surface(params: dict):
     """
     Build a VolSurface from the current snapshot, or return None on failure.
 
-    WHY LAZY: Building the surface (bicubic spline fit + Dupire grid) takes ~0.5s.
-    We only do it when the user has selected a vol model that actually needs it.
+    Caches the result in session_state keyed by snapshot_key + S0 + r + q so
+    the surface is not rebuilt on every Run click. The Dupire local vol grid
+    is also built once and shared across all three pricers.
 
     Returns: (VolSurface | None, error_message | None)
     """
     from app.vol_surface import VolSurface
+    from scipy.interpolate import RegularGridInterpolator
+
+    snap_key = params.get("snapshot_key", "")
+    cache_key = f"vs_{snap_key}_{params['S0']}_{params['r']}_{params.get('q', 0.014)}"
+
+    cached = st.session_state.get("vol_surface_cache")
+    if cached and cached.get("key") == cache_key:
+        return cached["vs"], None
+
     try:
         snap_df = params["snapshot_df"]
         vs = VolSurface(snap_df, S0=params["S0"], r=params["r"], q=params.get("q", 0.014))
+
+        # Build shared Dupire grid once for all pricers
+        import numpy as np
+        m_axis = np.linspace(0.40, 1.80, 40)
+        max_t = params["autocallable"].maturity_years + 0.05
+        t_axis = np.linspace(0.01, max_t, 25)
+        LV = vs.dupire_local_vol_grid(m_axis, t_axis)
+        local_vol_interp = RegularGridInterpolator(
+            (t_axis, m_axis), LV,
+            method="linear", bounds_error=False, fill_value=None,
+        )
+
+        st.session_state["vol_surface_cache"] = {
+            "key": cache_key,
+            "vs": vs,
+            "local_vol_interp": local_vol_interp,
+        }
         return vs, None
     except Exception as e:
         return None, str(e)
@@ -183,6 +210,7 @@ def run_pricers(params, ac, show_paths, track_conv):
 
     # Build vol surface if local vol is selected (needed by MC and FDM)
     vol_surface = None
+    local_vol_interp = None
     if vol_model == "local":
         with st.spinner("Building Dupire local vol surface from snapshot…"):
             vol_surface, vs_err = _build_vol_surface(params)
@@ -192,6 +220,9 @@ def run_pricers(params, ac, show_paths, track_conv):
                     "Falling back to flat vol for all pricers."
                 )
                 vol_model = "flat"
+            else:
+                cached = st.session_state.get("vol_surface_cache", {})
+                local_vol_interp = cached.get("local_vol_interp")
 
     # FD only supports flat or local vol (Heston/Bates FDM requires 2D PDE — not yet built).
     fd_vol_model  = vol_model if vol_model in ("flat", "local") else "flat"
@@ -210,6 +241,7 @@ def run_pricers(params, ac, show_paths, track_conv):
                 x_min=params["x_min"],
                 vol_model=fd_vol_model,
                 vol_surface=vol_surface,
+                local_vol_interp=local_vol_interp,
             )
             results["fd"] = fd.price(return_grid=False)
         except Exception as e:
@@ -234,6 +266,7 @@ def run_pricers(params, ac, show_paths, track_conv):
                 vol_surface=vol_surface,
                 heston_params=heston_params,
                 jump_params=jump_params,
+                local_vol_interp=local_vol_interp,
             )
             results["mc"] = mcp.price(
                 return_paths=show_paths,
@@ -256,6 +289,7 @@ def run_pricers(params, ac, show_paths, track_conv):
                 vol_surface=vol_surface,
                 heston_params=heston_params,
                 jump_params=jump_params,
+                local_vol_interp=local_vol_interp,
             )
             results["sv"] = svp.price(
                 return_paths=show_paths,
