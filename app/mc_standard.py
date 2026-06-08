@@ -418,10 +418,11 @@ class MCStandardPricer:
             ki_surv = knocked_in[survived]
             T = self.ac.maturity_years
 
+            coupon_mask = S_T >= self.ac.coupon_barrier * self.S_ref
             payoffs_surv = np.where(
                 ki_surv,
                 np.maximum(S_T / self.S_ref, self.ac.protection_floor) * self.ac.notional * np.exp(-self.r * T),
-                (self.ac.notional + (self.ac.coupon_per_period() if self.ac.coupon_is_paid(S_T.mean()) else 0.0)) * np.exp(-self.r * T),
+                (self.ac.notional + np.where(coupon_mask, self.ac.coupon_per_period(), 0.0)) * np.exp(-self.r * T),
             )
             payoffs[survived] = payoffs_surv
 

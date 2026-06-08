@@ -26,6 +26,11 @@ Versioning follows [Semantic Versioning](https://semver.org/): patch (0.0.X) for
 
 ### Fixed
 
+- **`app/mc_standard.py`** — Coupon bug: `coupon_is_paid(S_T.mean())` used the mean of all
+  survived terminal spots to decide coupon payment, applying the same result to every path.
+  Fixed to per-path evaluation: `coupon_mask = S_T >= self.ac.coupon_barrier * self.S_ref`.
+  This correctly determines coupon payment individually for each survived path.
+
 - **`app/pde_pricer.py`** — FDM local vol numerical blow-up (price = $1500 instead of ~$950).
   Root cause: `_price_local_vol()` used `self.N_tau` computed in `__init__` based on flat vol
   (σ=0.20), but local vol can reach σ=1.0 (clamped). Courant number σ²·dt/dx² ≈ 9 >> 0.5 made
@@ -483,4 +488,52 @@ Sandbox count: 57/59 — 2 pre-existing errors from cloud-only OneDrive file tru
 ## [0.3.0] — 2026-06-06
 
 ### Fixed
-- **`app/autocallable.py`**: File was truncated at line 489 mid-function; `from_security_dict()` was missing its closing 10 lines. Append
+- **`app/autocallable.py`**: File was truncated at line 489 mid-function; `from_security_dict()` was missing its closing 10 lines. Appended missing `protection_floor`, `redemption_at_call`, `notional`, `stepped_barriers`, `correlation_matrix`, `asset_vols`, `description` parameters and closing parenthesis.
+- **`app/autocallable.py`**: `__post_init__` validation now uses `protection_barrier > 1.0` (exclusive) to correctly allow `protection_barrier=1.00` for the Digital Autocall's capital-protected structure.
+- **`tests/test_payoffs.py`**: File was truncated at line 234 mid-assertion; completed the `test_call_probabilities_monotone_decreasing` function.
+- **`tests/test_payoffs.py`**: Fixed three `terminal_payoff` test expected values: the method returns *discounted* PV including final coupon, not undiscounted par. Updated `test_terminal_payoff_no_knockin`, `test_terminal_payoff_with_knockin`, and `test_terminal_payoff_knockin_above_protection` accordingly.
+- **`tests/test_payoffs.py`**: Clarified that `european_ki` knock-in does NOT apply a protection floor — that is `soft_protection` only. The knocked-in payoff is `spot_T/S_ref * notional * discount`.
+- **`tests/test_heston.py`**: Full file rewrite after truncation at `test_heston_model_call_price`. Also fixed `test_heston_implied_vol_range` to filter out sentinel `0.01` values returned by `bs_implied_vol` on solver failure before checking the ATM vol range.
+- **`tests/test_pde_pricer.py`**: `test_fd_vs_mc_consistency` now uses `N_x=200, N_tau=200` (previously 120×80). At coarse resolution, FD has ~1.5% systematic bias vs MC; at 200×200, bias drops to <0.1%, and FD ($951.28) and MC ($950.50) agree within 1σ.
+
+### Root Cause (FUSE Write Cache)
+All truncations were caused by the OneDrive FUSE mount's write-buffering behavior: edits via the Windows-path Write/Edit tools did not fully flush before the session ended. Files written to the FUSE mount may be silently truncated if the buffer is not flushed. Additionally, stale `.pyc` bytecode files on the FUSE mount are read-only and cannot be deleted — Python loaded stale compiled code until source `.py` files were `touch`-ed to force mtime newer than the `.pyc`.
+
+**Resolution protocol established**: For any file that fails to import correctly:
+1. `touch <file>.py` to make source mtime > pyc mtime
+2. If still failing, rewrite via `python3 << 'EOF'` heredoc in bash
+3. Never rely on Write/Edit tool for critical file creation on FUSE mounts
+
+### Test Results
+**66 / 66 PASSED** — first clean run. See `test_results/20260606_results.md`.
+
+
+---
+
+## [0.2.0] — 2026-06-06
+
+### Added — Core Pricing Engine (Steps 1–9)
+
+**Infrastructure**
+- `requirements.txt`: All dependencies (streamlit, numpy, scipy, pandas, plotly, yfinance, pytest)
+- `.gitignore`: Standard Python ignores; sample_data/ CSVs intentionally committed for Streamlit Cloud
+- `git_setup.ps1`: PowerShell script for Windows git initialization (bypasses FUSE locking issues)
+- Directory scaffold: `app/`, `app/components/`, `app/pages/`, `scripts/`, `sample_data/`, `tests/`, `test_results/`
+
+**Data Layer**
+- `scripts/collect_snapshot.py`: Live SPX options snapshot collector via yfinance; `score_snapshot()` quality scorer (n_expiries, avg_strikes, pct_tight_spread, pct_missing_iv, quality_score)
+- `scripts/generate_synthetic_data.py`: Realistic synthetic vol surface generator for offline demo; 3 snapshots generated (20260606, 20260609, 20260610)
+- `sample_data/`: 3 CSV snapshots, ~1350 rows each, 23 expiries, 80+ strikes per expiry
+- `app/data_loader.py`: `list_available_snapshots()`, `load_snapshot()`, `get_spot_price()`, `get_rfr()`, `get_implied_vol_matrix()`, `resolve_data_dir()`
+
+**Product Layer**
+- `app/components/securities.py`: 4 pre-configured autocallables — Phoenix (SPX, 2Y, 8% pa), Worst-Of (SPX/NDX/RUT, 3Y, 12%), Step-Down Barrier (monthly, 2Y, 10%), Digital (3Y, $50 digital coupon)
+- `app/autocallable.py`: `AutoCallable` dataclass with full payoff logic — `observation_dates()`, `coupon_per_period()`, `call_barrier_at_period()`, `is_called()`, `terminal_payoff()`, `call_probabilities()`, `from_security_dict()` factory
+
+**Pricing Engines**
+- `app/pde_pricer.py`: Explicit FD on log-price grid (Paper 1, §2.2); change-of-variables to heat equation; autocall BCs at observation dates; `continuous_autocall_closedform()` for Paper 1 §2.3 validation. Validated: FD ≈ $958–970 for Phoenix.
+- `app/mc_standard.py`: GBM Monte Carlo (Paper 3, Eq. 2.3); antithetic variates; path storage for animation; convergence tracking. Validated: $963 ± $1.35 at N=2000.
+- `app/mc_survival.py`: One-step survival MC (Paper 3, Algorithm 1); stdlib `math.erf` for NumPy 2.x compatibility; `_p_survive()` valid at all spot levels including at-barrier. Validated: $967 ± $0.70 at N=2000, 1.93× variance reduction.
+
+**Volatility Models**
+- `app/vol_surface.py`: `VolSurface` class with bicubic spline fit (`RectBivariateSpline`); `dupire_local_vol()` via numerical diff
