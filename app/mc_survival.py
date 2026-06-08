@@ -23,6 +23,10 @@ from typing import Optional
 from app.autocallable import AutoCallable
 from app.mc_standard import MCResult
 
+# TODO (future): Basket (worst-of) survival MC — GHK importance sampling
+# (Paper 3, §2.2) via sequential conditional Cholesky decomposition.
+# Currently all pricers treat worst-of as single-asset.
+
 
 def _ncdf(z: float) -> float:
     """Standard normal CDF using math.erf (always available, no numpy needed)."""

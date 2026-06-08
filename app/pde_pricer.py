@@ -50,6 +50,10 @@ from dataclasses import dataclass, field
 from typing import Optional
 from app.autocallable import AutoCallable
 
+# TODO (future): Basket (worst-of) FDM — requires 3D PDE grid (one S dimension
+# per asset) or reduced 1D approximation using basket effective vol.
+# Currently all pricers treat worst-of as single-asset.
+
 
 # ---------------------------------------------------------------------------
 # Result Dataclasses
@@ -195,6 +199,16 @@ class FDPricer:
         self.scheme = scheme
         self.vol_model = vol_model
         self.vol_surface = vol_surface
+
+        # Effective sigma for call probability calculation.
+        # The analytical call_probabilities() in autocallable.py assumes
+        # flat-vol GBM. Using the vol-model-appropriate sigma here makes
+        # the call probability table consistent with the displayed price.
+        #   flat / local : self.sigma (ATM implied vol)
+        #   heston / bates: self.sigma by default; override via
+        #     fd.call_prob_sigma = math.sqrt(v0) after construction
+        #     when heston_params are available in the calling page.
+        self.call_prob_sigma = self.sigma
         self.local_vol_interp = local_vol_interp
 
         # The "strike equivalent" in the paper's change of variables
@@ -521,8 +535,9 @@ class FDPricer:
         V_final = self._u_to_V(u, self.tau_max)
         price = (1 - alpha_interp) * V_final[idx - 1] + alpha_interp * V_final[idx]
 
-        # Compute call probabilities (approximate analytical from autocallable.py)
-        call_probs = self.ac.call_probabilities(self.sigma, self.r, self.q)
+        # Compute call probabilities — use call_prob_sigma so the table
+        # reflects the same effective vol as the price (e.g. sqrt(v0) for Heston)
+        call_probs = self.ac.call_probabilities(self.call_prob_sigma, self.r, self.q)
 
         result = FDResult(
             price=float(np.clip(price, 0, self.notional * 1.5)),
@@ -695,8 +710,9 @@ class FDPricer:
         alpha_i = (self.S_ref - S_ax[idx - 1]) / (S_ax[idx] - S_ax[idx - 1])
         price = (1 - alpha_i) * V[idx - 1] + alpha_i * V[idx]
 
-        # Call probabilities use flat sigma (analytical formula from Paper 1)
-        call_probs = self.ac.call_probabilities(self.sigma, self.r, self.q)
+        # Compute call probabilities — use call_prob_sigma (effective vol for
+        # the active vol model) so the table is consistent with the price
+        call_probs = self.ac.call_probabilities(self.call_prob_sigma, self.r, self.q)
 
         result = FDResult(
             price=float(np.clip(price, 0, self.notional * 1.5)),

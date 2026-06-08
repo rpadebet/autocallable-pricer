@@ -52,6 +52,17 @@ sigma = params["sigma"]
 r = params["r"]
 q = params["q"]
 
+if ac is None:
+    st.error("Product initialization failed. Check sidebar parameters.")
+    st.stop()
+
+if ac.structure_type == "worst_of":
+    st.warning(
+        "⚠️ **Worst-of basket pricing is not yet implemented.** "
+        "The current pricers treat this as a single-underlying SPX autocallable. "
+        "See the Pricer page for details."
+    )
+
 # ---------------------------------------------------------------------------
 # Helper: fast MC price (low N, for interactive sliders)
 # ---------------------------------------------------------------------------

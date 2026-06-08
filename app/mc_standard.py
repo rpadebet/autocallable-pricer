@@ -50,6 +50,11 @@ from dataclasses import dataclass, field
 from typing import Optional
 from app.autocallable import AutoCallable
 
+# TODO (future): Basket (worst-of) simulation — when ac.n_assets > 1, generate
+# correlated GBMs via Cholesky decomposition of the correlation matrix, using
+# per-asset vols from ac.asset_vols.  Take min(S_i/S_ref_i) at each observation
+# date for barrier checks.  Currently all pricers treat worst-of as single-asset.
+
 
 # ---------------------------------------------------------------------------
 # Result Dataclass

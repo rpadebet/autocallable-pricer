@@ -101,6 +101,16 @@ if _last_fp is not None and _last_fp != _current_fp:
 # When a stochastic vol model is selected but Heston hasn't been calibrated yet,
 # warn the user so they don't unknowingly price with default (non-market) params.
 _vm_selected = params.get("vol_model", "flat")
+
+# ── Worst-of basket warning ─────────────────────────────────────────────────
+if ac.structure_type == "worst_of":
+    st.warning(
+        "⚠️ **Worst-of basket pricing is not yet implemented.** "
+        "The current pricers treat this as a single-underlying SPX autocallable "
+        "(ignoring NDX, RUT, correlations, and per-asset volatilities). "
+        "Basket simulation via Cholesky-correlated GBMs is planned for a future release. "
+        "For now, use this as an approximate single-asset price only."
+    )
 if _vm_selected in ("heston", "bates"):
     _heston_cal = st.session_state.get("heston_cal")
     if _heston_cal:

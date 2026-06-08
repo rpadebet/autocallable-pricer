@@ -77,6 +77,7 @@ SECURITIES: dict[str, dict[str, Any]] = {
         # --- Metadata ---
         "name": "Worst-Of Autocall",
         "description": (
+            "⚠️ BASKET PRICING NOT YET IMPLEMENTED — currently priced as single-asset SPX only. "
             "Worst-of basket on SPX, NDX, and RUT. The autocall trigger and all "
             "barrier levels are assessed on the worst-performing asset (minimum "
             "S_i/S0_i ratio). Higher 12% p.a. coupon compensates for the extra "
