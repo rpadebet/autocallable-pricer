@@ -274,6 +274,13 @@ if run_all:
                                                if k not in ("snapshot_df", "autocallable", "security_params")}
     # Store fingerprint so the "settings changed" banner can detect future changes
     st.session_state["pricer_last_run_fp"] = _current_fp
+    # WHY rerun: updating session_state mid-script does NOT re-render widgets in the
+    # same pass. The warning banner (computed from _last_fp at the top of the script)
+    # still shows the old fingerprint.  A single st.rerun() re-runs the script from
+    # the top with the new fingerprint already in session_state → banner disappears
+    # and the button returns to its idle state.  Pricers do NOT re-run because
+    # `run_all` evaluates to False on the rerun (button is reset after one True).
+    st.rerun()
 
 res = st.session_state.get("pricer_results", None)
 
