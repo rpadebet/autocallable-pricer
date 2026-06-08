@@ -153,9 +153,9 @@ def _ensure_sidebar_defaults(snaps: list, pre_built: list, data_dir: str = "") -
         "theta":               0.04,
         "gamma":               0.30,
         "rho":                 -0.70,
-        "lam_j":               0.10,
-        "mu_j":                -0.05,
-        "sig_j":               0.10,
+        "lam_j":               0.50,    # ~0.5 jumps/yr — visible price impact vs Heston
+        "mu_j":                -0.15,   # -15% mean jump — significant downward bias
+        "sig_j":               0.25,    # 25% jump vol — wide distribution per event
         # ⑤ Monte Carlo
         "n_paths":             10_000,
         "n_steps":             250,
