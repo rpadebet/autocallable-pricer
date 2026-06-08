@@ -148,22 +148,22 @@ def _ensure_sidebar_defaults(snaps: list, pre_built: list, data_dir: str = "") -
         # ④ Model parameters
         "sigma_flat":          0.20,
         "use_calibrated_heston": False,
-        "v0":                  0.04,
-        "kappa":               1.5,
-        "theta":               0.04,
-        "gamma":               0.30,
-        "rho":                 -0.70,
-        "lam_j":               0.50,    # ~0.5 jumps/yr — visible price impact vs Heston
-        "mu_j":                -0.15,   # -15% mean jump — significant downward bias
-        "sig_j":               0.25,    # 25% jump vol — wide distribution per event
+        "v0":                  0.04,     # initial variance → 20% vol
+        "kappa":               2.0,      # mean reversion speed (realistic SPX: 1.5–3.0)
+        "theta":               0.04,     # long-run variance → 20% vol
+        "gamma":               0.40,     # vol-of-vol (realistic SPX: 0.30–0.60)
+        "rho":                 -0.70,    # spot-vol correlation (equity leverage effect)
+        "lam_j":               1.0,      # 1 jump/yr — visible Bates impact
+        "mu_j":                -0.20,    # -20% mean jump — significant downside
+        "sig_j":               0.25,     # 25% jump vol
         # ⑤ Monte Carlo
         "n_paths":             10_000,
         "n_steps":             250,
         "seed":                42,
         "antithetic":          True,
         # ⑥ FDM
-        "N_x":                 150,
-        "N_tau":               100,
+        "N_x":                 300,
+        "N_tau":               150,
         "x_min":               -5.0,
     }
 
