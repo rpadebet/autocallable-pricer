@@ -354,8 +354,8 @@ def render_sidebar(page_name: str = "") -> dict:
             help="Used by FD pricer and flat-vol MC. For Heston/Bates MC the variance SDE is used; this acts as fallback.",
         )
 
-        # Pull Heston params from session_state for use in return dict even when
-        # the expander is hidden (vol_model = flat / local).
+        # Pre-read Heston params so they're in local scope before the expander renders.
+        # The sliders below (always rendered) will overwrite these with the live values.
         v0    = st.session_state["v0"]
         kappa = st.session_state["kappa"]
         theta = st.session_state["theta"]
@@ -363,9 +363,29 @@ def render_sidebar(page_name: str = "") -> dict:
         rho   = st.session_state["rho"]
         use_calibrated = st.session_state["use_calibrated_heston"]
 
-        # ── ④b: Heston parameters — only shown for Heston / Bates
-        if vol_model in ("heston", "bates"):
-            with st.expander("Heston Variance Process", expanded=True):
+        # ── ④b: Heston parameters — ALWAYS rendered so session_state keys are
+        #        always claimed by a widget.
+        #
+        #        WHY ALWAYS RENDER: Streamlit's widget-state cleanup removes
+        #        session_state keys for any widget that was rendered in the
+        #        previous run but is NOT rendered in the current run.  If these
+        #        sliders lived inside `if vol_model in ("heston", "bates"):`,
+        #        switching to Flat/Local vol would cause v0/kappa/theta/gamma/rho
+        #        to be cleaned up at the end of that render pass.  On the next
+        #        render _ensure_sidebar_defaults() would find them absent and
+        #        reset them to defaults — losing the user's calibrated values.
+        #
+        #        Fix: always render the expander (and its sliders), just control
+        #        whether it is expanded or not.  Expander content in Streamlit is
+        #        ALWAYS executed in Python regardless of collapsed/expanded state,
+        #        so all widget keys inside are always "claimed" and never cleaned up.
+        _heston_active = vol_model in ("heston", "bates")
+        with st.expander("Heston Variance Process", expanded=_heston_active):
+                if not _heston_active:
+                    st.caption(
+                        "ℹ️ Not active — switch **③ Vol Model** to Heston or Bates. "
+                        "Values are preserved here while you use a different model."
+                    )
                 st.caption("dv = κ(θ−v)dt + γ√v dW_v,  Corr(W_S, W_v) = ρ")
 
                 # All widgets below: NO value= — reads from session_state pre-set above
@@ -442,34 +462,35 @@ def render_sidebar(page_name: str = "") -> dict:
                     st.warning(f"Feller ✗  κθ={kappa*theta:.4f} ≤ ½γ²={0.5*gamma**2:.4f}")
                 st.caption(f"Implied ATM vol ≈ {((v0+theta)/2)**0.5*100:.1f}%")
 
-        # ── ④c: Jump parameters — only shown for Bates
-        lam_j = st.session_state["lam_j"]
-        mu_j  = st.session_state["mu_j"]
-        sig_j = st.session_state["sig_j"]
-
-        if vol_model == "bates":
-            with st.expander("Jump Parameters (Bates)", expanded=True):
-                st.caption("N(t) ~ Poisson(λ),  each jump: log-return ~ N(μ_J, σ_J²)")
-                lam_j = st.slider(
-                    "λ (jumps per year)",
-                    min_value=0.0, max_value=2.0, step=0.01, format="%.2f",
-                    key="lam_j",
-                    help="Expected number of jumps per year.",
+        # ── ④c: Jump parameters — ALWAYS rendered (same reason as Heston above).
+        #        lam_j / mu_j / sig_j must always be claimed so they are never
+        #        cleaned up when the model is not Bates.
+        _bates_active = vol_model == "bates"
+        with st.expander("Jump Parameters (Bates)", expanded=_bates_active):
+            if not _bates_active:
+                st.caption(
+                    "ℹ️ Not active — switch **③ Vol Model** to Bates. "
+                    "Values are preserved here while you use a different model."
                 )
-                mu_j = st.slider(
-                    "μ_J (mean log-jump)",
-                    min_value=-0.30, max_value=0.10, step=0.01, format="%.2f",
-                    key="mu_j",
-                    help="Negative = downward crash bias.",
-                )
-                sig_j = st.slider(
-                    "σ_J (log-jump vol)",
-                    min_value=0.01, max_value=0.50, step=0.01, format="%.2f",
-                    key="sig_j",
-                )
-            jump_params = dict(lam=lam_j, mu_J=mu_j, sig_J=sig_j)
-        else:
-            jump_params = None
+            st.caption("N(t) ~ Poisson(λ),  each jump: log-return ~ N(μ_J, σ_J²)")
+            lam_j = st.slider(
+                "λ (jumps per year)",
+                min_value=0.0, max_value=2.0, step=0.01, format="%.2f",
+                key="lam_j",
+                help="Expected number of jumps per year.",
+            )
+            mu_j = st.slider(
+                "μ_J (mean log-jump)",
+                min_value=-0.30, max_value=0.10, step=0.01, format="%.2f",
+                key="mu_j",
+                help="Negative = downward crash bias.",
+            )
+            sig_j = st.slider(
+                "σ_J (log-jump vol)",
+                min_value=0.01, max_value=0.50, step=0.01, format="%.2f",
+                key="sig_j",
+            )
+        jump_params = dict(lam=lam_j, mu_J=mu_j, sig_J=sig_j) if _bates_active else None
 
         st.divider()
 

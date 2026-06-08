@@ -4,6 +4,39 @@ All notable changes to the AutoCallable Analytics Platform are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 Versioning follows [Semantic Versioning](https://semver.org/): patch (0.0.X) for bug fixes, minor (0.X.0) for new features, major (X.0.0) for architecture changes.
 
+## [0.5.11] — 2026-06-08
+
+### Fixed
+
+- **`app/components/sidebar.py`** — Sidebar settings (Heston/Bates parameters) resetting to
+  defaults when navigating between pages.
+
+  **Root cause**: Streamlit's widget-state cleanup removes `session_state` keys for any widget
+  that was rendered in the *previous* run but is NOT rendered in the *current* run.
+  `v0`, `kappa`, `theta`, `gamma`, `rho` (Heston) and `lam_j`, `mu_j`, `sig_j` (Bates)
+  were only rendered inside `if vol_model in ("heston", "bates"):` / `if vol_model == "bates":`
+  blocks.  When navigating to a page while on Flat or Local vol, those sliders were skipped,
+  their session_state entries were cleaned up at the end of the render pass, and on the next
+  render `_ensure_sidebar_defaults()` found them absent and reset them to defaults.
+
+  **Fix**: Both the "Heston Variance Process" and "Jump Parameters (Bates)" expanders are now
+  **always rendered** regardless of the active vol model. The `if vol_model …` gates are
+  replaced by `expanded=_heston_active` / `expanded=_bates_active` arguments, so the expanders
+  are visually collapsed when inactive but their widget keys are always claimed by Streamlit
+  and never cleaned up. An inline caption is shown inside collapsed expanders to explain why
+  the parameters are preserved there. Per-session Heston calibration values and custom
+  jump params now persist correctly across all page navigations.
+
+  - `if vol_model in ("heston", "bates"): with st.expander(…)` →
+    `_heston_active = …; with st.expander(…, expanded=_heston_active):`
+  - `if vol_model == "bates": with st.expander(…)` →
+    `_bates_active = …; with st.expander(…, expanded=_bates_active):`
+  - Removed now-redundant pre-reads of `lam_j`, `mu_j`, `sig_j` from session_state
+    (values always come from the always-rendered sliders).
+  - Updated stale comment on the Heston pre-read block.
+
+---
+
 ## [0.5.10] — 2026-06-07
 
 ### Fixed
@@ -438,22 +471,4 @@ All truncations were caused by the OneDrive FUSE mount's write-buffering behavio
 - `requirements.txt`: All dependencies (streamlit, numpy, scipy, pandas, plotly, yfinance, pytest)
 - `.gitignore`: Standard Python ignores; sample_data/ CSVs intentionally committed for Streamlit Cloud
 - `git_setup.ps1`: PowerShell script for Windows git initialization (bypasses FUSE locking issues)
-- Directory scaffold: `app/`, `app/components/`, `app/pages/`, `scripts/`, `sample_data/`, `tests/`, `test_results/`
-
-**Data Layer**
-- `scripts/collect_snapshot.py`: Live SPX options snapshot collector via yfinance; `score_snapshot()` quality scorer (n_expiries, avg_strikes, pct_tight_spread, pct_missing_iv, quality_score)
-- `scripts/generate_synthetic_data.py`: Realistic synthetic vol surface generator for offline demo; 3 snapshots generated (20260606, 20260609, 20260610)
-- `sample_data/`: 3 CSV snapshots, ~1350 rows each, 23 expiries, 80+ strikes per expiry
-- `app/data_loader.py`: `list_available_snapshots()`, `load_snapshot()`, `get_spot_price()`, `get_rfr()`, `get_implied_vol_matrix()`, `resolve_data_dir()`
-
-**Product Layer**
-- `app/components/securities.py`: 4 pre-configured autocallables — Phoenix (SPX, 2Y, 8% pa), Worst-Of (SPX/NDX/RUT, 3Y, 12%), Step-Down Barrier (monthly, 2Y, 10%), Digital (3Y, $50 digital coupon)
-- `app/autocallable.py`: `AutoCallable` dataclass with full payoff logic — `observation_dates()`, `coupon_per_period()`, `call_barrier_at_period()`, `is_called()`, `terminal_payoff()`, `call_probabilities()`, `from_security_dict()` factory
-
-**Pricing Engines**
-- `app/pde_pricer.py`: Explicit FD on log-price grid (Paper 1, §2.2); change-of-variables to heat equation; autocall BCs at observation dates; `continuous_autocall_closedform()` for Paper 1 §2.3 validation. Validated: FD ≈ $958–970 for Phoenix.
-- `app/mc_standard.py`: GBM Monte Carlo (Paper 3, Eq. 2.3); antithetic variates; path storage for animation; convergence tracking. Validated: $963 ± $1.35 at N=2000.
-- `app/mc_survival.py`: One-step survival MC (Paper 3, Algorithm 1); stdlib `math.erf` for NumPy 2.x compatibility; `_p_survive()` valid at all spot levels including at-barrier. Validated: $967 ± $0.70 at N=2000, 1.93× variance reduction.
-
-**Volatility Models**
-- `app/vol_surface.py`: `VolSurface` class with bicubic spline fit (`RectBivariateSpline`); `dupire_local_vol()` via numerical diff
+- Directory scaffold: `app/`, `app/components/`, `app/pages/`, `scripts/`, `sample_data/`, `
