@@ -35,6 +35,7 @@ from plotly.subplots import make_subplots
 
 from app.components.sidebar import render_sidebar
 from app.pde_pricer import FDPricer
+from app.vol_surface import VolSurface
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -82,9 +83,11 @@ c1, c2 = st.columns([1, 3])
 with c1:
     run_fdm = st.button("▶ Run FD + Build Grid", type="primary", use_container_width=True)
 
+_vol_label = params.get("vol_model", "flat").replace("local", "Dupire Local Vol").title()
 st.caption(
     f"Grid: Nₓ = {params['N_x']} | Nτ = {params['N_tau']} | x_min = {params['x_min']} | "
-    f"σ = {params['sigma']*100:.1f}% | r = {params['r']*100:.2f}%"
+    f"Vol: {_vol_label if params.get('vol_model') != 'flat' else f'σ = {params['sigma']*100:.1f}%'} | "
+    f"r = {params['r']*100:.2f}%"
 )
 
 
@@ -92,9 +95,24 @@ st.caption(
 # RUN FD PRICER WITH GRID RETURN
 # ==============================================================================
 
-if run_fdm:
+if run_fdm or "fdm_result" not in st.session_state or st.session_state.get("fdm_last_run_fp") != _cur_fp_fdm:
     with st.spinner("Running FD pricer with full grid return…"):
         try:
+            vol_model = params.get("vol_model", "flat")
+            vol_surface = None
+            local_vol_interp = None
+
+            if vol_model == "local":
+                cached = st.session_state.get("vol_surface_cache")
+                if cached and cached.get("key", "").startswith("vs_"):
+                    vol_surface = cached.get("vs")
+                    local_vol_interp = cached.get("local_vol_interp")
+                if vol_surface is None:
+                    snap_df = params["snapshot_df"]
+                    vol_surface = VolSurface(snap_df, S0=params["S0"], r=params["r"], q=params.get("q", 0.014))
+
+            fd_vol_model = vol_model if vol_model in ("flat", "local") else "flat"
+
             pricer = FDPricer(
                 autocallable=ac,
                 sigma=params["sigma"],
@@ -103,10 +121,13 @@ if run_fdm:
                 N_x=params["N_x"],
                 N_tau=params["N_tau"],
                 x_min=params["x_min"],
+                vol_model=fd_vol_model,
+                vol_surface=vol_surface,
+                local_vol_interp=local_vol_interp,
             )
             fd_result = pricer.price(return_grid=True)
             st.session_state["fdm_result"] = fd_result
-            st.session_state["fdm_S_axis"] = pricer._S_axis if hasattr(pricer, "_S_axis") else None
+            st.session_state["fdm_last_run_fp"] = _cur_fp_fdm
         except Exception as e:
             st.error(f"FD pricer error: {e}")
             import traceback
