@@ -293,25 +293,63 @@ with tab3:
 
         cum_prob = np.cumsum(probs)
         survival = 1.0 - cum_prob
+        barriers = [ac.call_barrier_at_period(i) for i in range(len(obs_dates))]
 
+        # ── Step-down narrative ─────────────────────────────────────────
+        if ac.structure_type == "step_down" and ac.stepped_barriers:
+            st.info(
+                "**Step-down barrier in effect.** "
+                + " — ".join(
+                    f"From period {sb[0]}: barrier = {sb[1]*100:.0f}%"
+                    for sb in ac.stepped_barriers
+                )
+                + ". As the barrier drops, the call probability rises at later dates — "
+                "the product becomes easier to call over time. Compare with a Phoenix "
+                "autocall where the barrier stays at 100% throughout."
+            )
+        elif ac.structure_type == "phoenix":
+            st.caption(
+                f"Fixed call barrier at {ac.call_barrier*100:.0f}% throughout. "
+                "Probabilities decline over time because fewer paths survive to each date."
+            )
+
+        # ── Chart ───────────────────────────────────────────────────────
         fig = make_subplots(
             rows=1, cols=2,
             subplot_titles=[
-                "Probability of call at each date (conditional)",
+                "Call probability at each date + Barrier level",
                 "Cumulative probability of having been called",
-            ]
+            ],
+            specs=[[{"secondary_y": True}, {"secondary_y": False}]],
         )
 
         bar_colors = [f"rgba(31,119,180,{0.4 + 0.6 * p / max(probs)})" for p in probs]
 
+        # Left chart: bars = probabilities, line = barrier level
         fig.add_trace(go.Bar(
             x=[f"t={d:.2f}yr" for d in obs_dates],
             y=probs,
             marker_color=bar_colors,
-            name="Call prob (conditional)",
-            hovertemplate="%{x}<br>P(call here) = %{y:.1%}<extra></extra>",
-        ), row=1, col=1)
+            name="Call prob",
+            hovertemplate="%{x}<br>P(call) = %{y:.1%}<extra></extra>",
+        ), row=1, col=1, secondary_y=False)
 
+        fig.add_trace(go.Scatter(
+            x=[f"t={d:.2f}yr" for d in obs_dates],
+            y=[b * 100 for b in barriers],
+            mode="lines+markers",
+            line=dict(color="#EF5350", width=2, dash="dot"),
+            marker=dict(size=6, symbol="diamond"),
+            name="Call barrier (%)",
+            hovertemplate="%{x}<br>Barrier = %{y:.0f}%<extra></extra>",
+        ), row=1, col=1, secondary_y=True)
+
+        fig.update_yaxes(title_text="Call Probability", tickformat=".0%", row=1, col=1, secondary_y=False)
+        fig.update_yaxes(title_text="Barrier Level (%)", range=[
+            min(barriers) * 100 - 5, max(barriers) * 100 + 5
+        ], row=1, col=1, secondary_y=True)
+
+        # Right chart: cumulative
         fig.add_trace(go.Scatter(
             x=[f"t={d:.2f}yr" for d in obs_dates],
             y=cum_prob,
@@ -322,27 +360,30 @@ with tab3:
             hovertemplate="%{x}<br>P(called by here) = %{y:.1%}<extra></extra>",
         ), row=1, col=2)
 
-        fig.update_yaxes(tickformat=".0%")
+        fig.update_yaxes(tickformat=".0%", row=1, col=2)
         fig.update_layout(
-            height=400,
+            height=450,
             showlegend=False,
             title=f"Call Probability Term Structure — {ac.name} (σ={sigma:.0%}, r={r:.1%})",
         )
         st.plotly_chart(fig, use_container_width=True)
 
-        # Table
+        # ── Data table ──────────────────────────────────────────────────
         import pandas as pd
         df = pd.DataFrame({
+            "Period": range(1, len(obs_dates) + 1),
             "Obs. Date (yr)": [f"{d:.3f}" for d in obs_dates],
+            "Call Barrier": [f"{b*100:.0f}%" for b in barriers],
             "P(call at this date)": [f"{p:.2%}" for p in probs],
-            "P(called by this date)": [f"{c:.2%}" for c in cum_prob],
+            "P(called by now)": [f"{c:.2%}" for c in cum_prob],
             "P(still alive)": [f"{s:.2%}" for s in survival],
         })
         st.dataframe(df, use_container_width=True, hide_index=True)
 
         st.caption(
-            f"Expected life: {sum(d * p for d, p in zip(obs_dates, probs)) + obs_dates[-1] * survival[-1]:.2f} years "
-            f"(probability-weighted average time to call or maturity)"
+            f"Total call probability: {cum_prob[-1]:.1%}  |  "
+            f"Probability of reaching maturity: {survival[-1]:.1%}  |  "
+            f"Expected life: {sum(d * p for d, p in zip(obs_dates, probs)) + obs_dates[-1] * survival[-1]:.2f} yr"
         )
 
     except Exception as e:
