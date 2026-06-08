@@ -166,9 +166,17 @@ def _ensure_sidebar_defaults(snaps: list, pre_built: list, data_dir: str = "") -
         "N_tau":               100,
         "x_min":               -5.0,
     }
+
+    # BACKUP RESTORE: pull from _sidebar_backup first.
+    # _sidebar_backup is a non-widget key — Streamlit's widget-state cleanup
+    # never removes it, so it survives page navigations even when widget keys
+    # get cleaned up. If the key is missing in session_state AND backup has a
+    # value for it, we prefer the backup over the hardcoded default, which means
+    # the user's last-used setting is restored rather than the factory default.
+    _backup = st.session_state.get("_sidebar_backup", {})
     for k, v in defaults.items():
         if k not in st.session_state:
-            st.session_state[k] = v
+            st.session_state[k] = _backup.get(k, v)
 
 
 def render_sidebar(page_name: str = "") -> dict:
@@ -232,9 +240,12 @@ def render_sidebar(page_name: str = "") -> dict:
 
         # r and S0: set from market data the very first time (session_state absent);
         # after that, whatever the user typed is in session_state and we don't touch it.
+        # BACKUP RESTORE: prefer the user's last-used value from _sidebar_backup over
+        # market data, so a page navigation doesn't silently reset their manual override.
         if "r_initialized" not in st.session_state:
-            st.session_state["r"]            = float(round(rfr_market, 4))
-            st.session_state["S0"]           = float(round(S0_market,  1))
+            _backup = st.session_state.get("_sidebar_backup", {})
+            st.session_state["r"]            = float(round(_backup.get("r",  rfr_market), 4))
+            st.session_state["S0"]           = float(round(_backup.get("S0", S0_market),  1))
             st.session_state["r_initialized"] = True
 
         col_r, col_q = st.columns(2)
@@ -577,28 +588,4 @@ def render_sidebar(page_name: str = "") -> dict:
         "r":              r,
         "q":              q,
         # Product
-        "security_name":   sec_name_display,
-        "security_params": sec_params,
-        "autocallable":    ac,
-        # Vol model
-        "sigma":           sigma_flat,
-        "vol_model":       vol_model,
-        "heston_params":   dict(v0=v0, kappa=kappa, theta=theta, gamma=gamma, rho=rho),
-        "jump_params":     jump_params,
-        "v0":              v0,
-        "kappa":           kappa,
-        "theta":           theta,
-        "gamma":           gamma,
-        "rho":             rho,
-        "use_calibrated_heston": use_calibrated,
-        # Monte Carlo
-        "n_paths":    n_paths,
-        "n_steps":    n_steps,
-        "seed":       seed,
-        "antithetic": antithetic,
-        # FDM
-        "N_x":   N_x,
-        "N_tau": N_tau,
-        "x_min": x_min,
-    }
-    return params
+        "securit
