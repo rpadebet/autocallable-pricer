@@ -591,11 +591,9 @@ class FDPricer:
         from scipy.interpolate import RegularGridInterpolator as _RGI
         _m_axis = np.linspace(0.40, 1.80, 40)
         _t_axis = np.linspace(0.01, self.ac.maturity_years + 0.05, 25)
-        _M_g, _T_g = np.meshgrid(_m_axis, _t_axis)
-        # np.vectorize iterates in Python but runs only once — 1,000 Dupire calls total.
-        _LV_g = np.vectorize(
-            lambda m, t: self.vol_surface.dupire_local_vol(m, t)
-        )(_M_g, _T_g)
+        # Vectorised grid build: 4 C-level spline+BS calls replace 1,000 Python calls.
+        # dupire_local_vol_grid() returns shape (nT=25, nM=40) — matches RGI layout.
+        _LV_g = self.vol_surface.dupire_local_vol_grid(_m_axis, _t_axis)
         _lv_interp = _RGI(
             (_t_axis, _m_axis), _LV_g,
             method="linear", bounds_error=False, fill_value=None,
@@ -753,6 +751,7 @@ def continuous_autocall_closedform(
         Approximate price using the continuous-monitoring closed form.
     """
     from scipy.stats import norm
+    from scipy.stats import norm
 
     B = call_barrier * S0  # Barrier level in spot space
     T = maturity_years
@@ -776,12 +775,18 @@ def continuous_autocall_closedform(
     p_cross = 1.0 - p_no_cross
 
     # Approximate price:
-    #   Component 1: called paths → receive notional at call time (approximate mid-T)
+    #   Component 1: called paths -- receive notional at call time (approximate mid-T)
     expected_call_time = T / 2  # simplification; actual is E[tau | tau < T]
     pv_call = p_cross * notional * np.exp(-r * expected_call_time)
 
-    #   Component 2: uncalled paths → receive notional at maturity
+    #   Component 2: uncalled paths -- receive notional at maturity
     pv_no_call = p_no_cross * notional * np.exp(-r * T)
 
-    #   Coupon stream: simplified as coupon rate × expected time under the barrier
-    expected_life = p_cross * expected_call_time + p_n
+    #   Coupon stream: simplified as coupon rate * expected time under the barrier,
+    #   discounted at the midpoint. expected_life blends the two exit scenarios.
+    expected_life = p_cross * expected_call_time + p_no_cross * T
+    pv_coupons = coupon_pa * notional * expected_life * np.exp(-r * expected_life / 2.0)
+
+    price = pv_call + pv_no_call + pv_coupons
+    # Clip to sane range: floor at 0, cap at par + all coupons (can't exceed)
+    return float(np.clip(price, 0.0, notional * (1.0 + coupon_pa * T)))

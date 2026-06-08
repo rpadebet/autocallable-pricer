@@ -387,6 +387,94 @@ class VolSurface:
         local_vol = np.sqrt(local_var)
         return float(np.clip(local_vol, 0.01, 2.0))
 
+    def dupire_local_vol_grid(
+        self,
+        m_axis: np.ndarray,
+        T_axis: np.ndarray,
+        dK: float = 0.01,
+        dT: float = 0.01,
+    ) -> np.ndarray:
+        """
+        Compute Dupire local vol for an entire (moneyness × TTM) grid in one pass.
+
+        WHY THIS EXISTS:
+            Building the RegularGridInterpolator used by all three pricers requires
+            evaluating dupire_local_vol() at ~1,000 grid points (40 × 25).
+            Calling the scalar method 1,000 times costs ~2 s because each call
+            invokes implied_vol() + bs_call() separately in Python.
+            This method evaluates all stencil points in 4 C-level vectorised calls
+            (RectBivariateSpline.ev + scipy.special.ndtr), reducing the cost to ~0.05 s.
+
+        Algorithm:
+            1. Build flat arrays for all (m, T) stencil points.
+            2. Evaluate the smoothed IV spline at all 4 stencil positions in one shot.
+            3. Compute Black-Scholes call prices vectorised using scipy.special.ndtr
+               (C-backed Phi, ~10x faster than scipy.stats.norm.cdf).
+            4. Apply the Dupire formula element-wise.  Invalid cells fall back to
+               the implied vol (same behaviour as the scalar method).
+
+        Args:
+            m_axis: 1-D array of moneyness values (length nM).
+            T_axis: 1-D array of TTM values in years (length nT).
+            dK:     Moneyness step for strike-direction derivatives (default 1%).
+            dT:     Time step for the time-direction derivative (default 0.01 yr).
+
+        Returns:
+            np.ndarray of shape (nT, nM) where result[i, j] = sigma_loc(T_axis[i], m_axis[j]).
+            Values are clamped to [0.05, 1.0].
+        """
+        from scipy.special import ndtr  # Phi(x) = ndtr(x) -- C-backed, avoids Python norm.cdf overhead
+
+        S, r, q = self.S0, self.r, self.q
+
+        # Flat arrays of all (m, T) pairs in the grid.
+        # np.meshgrid returns (nT, nM) arrays so the result matches
+        # RegularGridInterpolator's expected (t_axis, m_axis) layout.
+        M_g, T_g = np.meshgrid(m_axis, T_axis)   # each (nT, nM)
+        m_flat = M_g.ravel()                       # (nT*nM,)
+        t_flat = T_g.ravel()                       # (nT*nM,)
+
+        # -- Step 1: Vectorised implied-vol lookup at all 4 stencil positions ----
+        # RectBivariateSpline.ev(xi, yi) evaluates at pairs in C -- one Python call
+        # for all nT*nM points replaces nT*nM individual implied_vol() calls.
+        iv_0T  = np.clip(self._spline.ev(m_flat,      t_flat     ), 0.02, 1.0)
+        iv_pT  = np.clip(self._spline.ev(m_flat + dK, t_flat     ), 0.02, 1.0)
+        iv_mT  = np.clip(self._spline.ev(m_flat - dK, t_flat     ), 0.02, 1.0)
+        iv_0dT = np.clip(self._spline.ev(m_flat,      t_flat + dT), 0.02, 1.0)
+
+        # -- Step 2: Vectorised Black-Scholes call prices ----------------------
+        def _bs_vec(iv: np.ndarray, m: np.ndarray, t: np.ndarray) -> np.ndarray:
+            """Vectorised B-S call; uses ndtr for speed; handles tiny T gracefully."""
+            K = m * S
+            safe_t  = np.maximum(t, 1e-6)
+            safe_iv = np.maximum(iv, 1e-6)
+            d1 = (np.log(S / K) + (r - q + 0.5 * safe_iv ** 2) * safe_t) / (safe_iv * np.sqrt(safe_t))
+            d2 = d1 - safe_iv * np.sqrt(safe_t)
+            pv = np.exp(-r * safe_t) * (S * np.exp((r - q) * safe_t) * ndtr(d1) - K * ndtr(d2))
+            intrinsic = np.maximum(S * np.exp(-q * safe_t) - K * np.exp(-r * safe_t), 0.0)
+            return np.where(t < 1e-6, intrinsic, pv)
+
+        C_0T  = _bs_vec(iv_0T,  m_flat,      t_flat     )
+        C_pT  = _bs_vec(iv_pT,  m_flat + dK, t_flat     )
+        C_mT  = _bs_vec(iv_mT,  m_flat - dK, t_flat     )
+        C_0dT = _bs_vec(iv_0dT, m_flat,      t_flat + dT)
+
+        # -- Step 3: Dupire formula (vectorised) -------------------------------
+        K_flat  = m_flat * S
+        dCdT    = (C_0dT - C_0T) / dT
+        dCdK    = (C_pT  - C_mT) / (2.0 * dK * S)
+        d2CdK2  = (C_pT  - 2.0 * C_0T + C_mT) / (dK * S) ** 2
+        num     = dCdT + (r - q) * K_flat * dCdK + q * C_0T
+        denom   = 0.5 * K_flat ** 2 * d2CdK2
+
+        # Where the Dupire ratio is ill-conditioned, fall back to implied vol
+        # (mirrors the scalar method's behaviour).
+        valid    = (denom > 1e-10) & (num > 0)
+        loc_var  = np.where(valid, num / np.where(denom > 1e-10, denom, 1.0), iv_0T ** 2)
+        lv_flat  = np.clip(np.sqrt(np.maximum(loc_var, 0.0)), 0.05, 1.0)
+
+        return lv_flat.reshape(T_g.shape)   # (nT, nM)
+
     def dupire_surface_grid(
         self,
         n_moneyness: int = 20,
@@ -396,7 +484,7 @@ class VolSurface:
         Evaluate the Dupire local vol surface on a grid for plotting.
 
         Returns:
-            (moneyness_grid, ttm_grid, local_vol_grid) — shape (n_ttm, n_moneyness).
+            (moneyness_grid, ttm_grid, local_vol_grid) -- shape (n_ttm, n_moneyness).
         """
         # Narrower range than IV surface to avoid unstable boundaries
         m_axis = np.linspace(0.80, 1.20, n_moneyness)

@@ -187,9 +187,8 @@ class MCStandardPricer:
         m_axis = np.linspace(0.40, 1.80, 40)
         max_t = self.ac.maturity_years + 0.05
         t_axis = np.linspace(0.01, max_t, 25)
-        M, T_g = np.meshgrid(m_axis, t_axis)
-        # Vectorised dupire evaluation on the grid
-        LV = np.vectorize(lambda m, t: vol_surface.dupire_local_vol(m, t))(M, T_g)
+        # Vectorised grid build: 4 C-level spline+BS calls replace 1,000 Python calls.
+        LV = vol_surface.dupire_local_vol_grid(m_axis, t_axis)
         # RegularGridInterpolator: axes (t_axis, m_axis), values LV[t, m]
         interp = RegularGridInterpolator(
             (t_axis, m_axis), LV,

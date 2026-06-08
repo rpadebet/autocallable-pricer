@@ -161,10 +161,8 @@ class MCSurvivalPricer:
         m_axis = np.linspace(0.40, 1.80, 40)
         max_t = self.ac.maturity_years + 0.05
         t_axis = np.linspace(0.01, max_t, 25)
-        M, T_g = np.meshgrid(m_axis, t_axis)
-        # np.vectorize is still a Python loop, but runs only once at init time.
-        # 25×40 = 1,000 Dupire evaluations total.
-        LV = np.vectorize(lambda m, t: vol_surface.dupire_local_vol(m, t))(M, T_g)
+        # Vectorised grid build: 4 C-level spline+BS calls replace 1,000 Python calls.
+        LV = vol_surface.dupire_local_vol_grid(m_axis, t_axis)
         interp = RegularGridInterpolator(
             (t_axis, m_axis), LV,
             method="linear", bounds_error=False, fill_value=None,
