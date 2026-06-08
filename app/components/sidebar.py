@@ -309,11 +309,15 @@ def render_sidebar(page_name: str = "") -> dict:
             mat  = sec_params.get("maturity_years", "?")
             freq = sec_params.get("obs_frequency",  "?")
             cb   = sec_params.get("call_barrier",   "?")
-            cpn  = sec_params.get("coupon_pa",      "?")
+            cpn  = sec_params.get("coupon_pa")
+            if cpn is None and sec_params.get("digital_coupon") is not None:
+                cpn_str = f"${sec_params['digital_coupon']:,.0f} (digital)"
+            else:
+                cpn_str = f"{int(cpn*100) if isinstance(cpn, (int, float)) else cpn}%pa" if cpn is not None else "?%pa"
             pb   = sec_params.get("protection_barrier", "?")
             st.caption(
                 f"T={mat}y · {freq} · call@{int(cb*100) if isinstance(cb,float) else cb}% "
-                f"· {int(cpn*100) if isinstance(cpn,float) else cpn}%pa "
+                f"· {cpn_str} "
                 f"· KI@{int(pb*100) if isinstance(pb,float) else pb}%"
             )
 

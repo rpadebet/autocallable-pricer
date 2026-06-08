@@ -93,7 +93,13 @@ col1, col2, col3, col4, col5 = st.columns(5)
 with col1:
     st.metric("Maturity", f"{sp.get('maturity_years', 2)}Y")
 with col2:
-    st.metric("Coupon p.a.", f"{sp.get('coupon_pa', 0)*100:.1f}%")
+    _cpn_pa = sp.get("coupon_pa")
+    if _cpn_pa is not None:
+        st.metric("Coupon p.a.", f"{_cpn_pa * 100:.1f}%")
+    elif sp.get("digital_coupon") is not None:
+        st.metric("Coupon", f"${sp['digital_coupon']:,.0f} (digital)")
+    else:
+        st.metric("Coupon p.a.", "0%")
 with col3:
     st.metric("Call Barrier", f"{sp.get('call_barrier', 1.0)*100:.0f}%")
 with col4:
