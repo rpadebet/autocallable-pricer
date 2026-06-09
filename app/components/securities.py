@@ -70,7 +70,7 @@ SECURITIES: dict[str, dict[str, Any]] = {
 
         # --- Model params (overridden by sidebar if user changes them) ---
         "default_vol": 0.17,     # ATM vol fallback if no snapshot loaded
-        "default_spot": 5300.0,  # SPX reference level if no snapshot loaded
+        "default_spot": 7300.0,  # SPX reference level if no snapshot loaded
     },
 
     "Worst-Of Autocall": {
@@ -158,7 +158,7 @@ SECURITIES: dict[str, dict[str, Any]] = {
 
         # --- Model params ---
         "default_vol": 0.17,
-        "default_spot": 5300.0,
+        "default_spot": 7300.0,
     },
 
     "Digital Autocall": {
@@ -197,7 +197,7 @@ SECURITIES: dict[str, dict[str, Any]] = {
 
         # --- Model params ---
         "default_vol": 0.17,
-        "default_spot": 5300.0,
+        "default_spot": 7300.0,
     },
 }
 
