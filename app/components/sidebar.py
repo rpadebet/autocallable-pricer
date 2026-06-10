@@ -413,7 +413,13 @@ def render_sidebar(page_name: str = "") -> dict:
                 # If toggle is ON: inject calibrated values into slider session_state keys
                 # BEFORE the sliders are rendered. Sliders read exclusively from session_state,
                 # so setting the keys here causes them to display the calibrated values.
-                _cal = st.session_state.get("heston_cal")
+                #
+                # Priority: Bates cal > Heston cal — when Bates is the active model,
+                # use the full 8-param Bates calibration.  When Heston is active, use
+                # the 5-param Heston calibration.
+                _bates_cal = st.session_state.get("bates_cal") if vol_model == "bates" else None
+                _cal = _bates_cal or st.session_state.get("heston_cal")
+                _cal_label = "Bates" if _bates_cal else "Heston"
                 _sliders_locked = False
                 if use_calibrated:
                     if _cal:
@@ -423,17 +429,23 @@ def render_sidebar(page_name: str = "") -> dict:
                         st.session_state["theta"] = float(min(max(_cal.get("theta", 0.04), 0.001), 0.30))
                         st.session_state["gamma"] = float(min(max(_cal.get("gamma", 0.30), 0.05),  1.5))
                         st.session_state["rho"]   = float(min(max(_cal.get("rho",  -0.70), -0.99), -0.01))
+                        # Inject Bates jump params too when using Bates calibration
+                        if _bates_cal:
+                            st.session_state["lam_j"] = float(min(max(_bates_cal.get("lam", 0.5), 0.0), 2.0))
+                            st.session_state["mu_j"]  = float(min(max(_bates_cal.get("mu_J", -0.15), -0.30), 0.10))
+                            st.session_state["sig_j"] = float(min(max(_bates_cal.get("sig_J", 0.25), 0.01), 0.50))
                         _sliders_locked = True
+                        rmse_str = f"{_cal.get('rmse_vol_pts', _cal.get('rmse', 0.0) * 100):.1f}"
                         st.success(
-                            f"✅ Calibrated values active — "
-                            f"RMSE {_cal.get('rmse_vol_pts', 0.0):.1f} vol-pts  "
+                            f"✅ Calibrated {_cal_label} values active — "
+                            f"RMSE {rmse_str} vol-pts  "
                             f"({_cal.get('n_quotes', '?')} quotes fitted)"
                         )
                     else:
                         # No calibration in session — guide user to run it
                         st.warning(
                             "⚠️ No calibration found. "
-                            "Go to **Vol Surface → Tab 2** and click **Calibrate Heston** first.",
+                            "Go to **Vol Surface → Tab 2** and click **Calibrate All Models** first.",
                             icon="📈",
                         )
 

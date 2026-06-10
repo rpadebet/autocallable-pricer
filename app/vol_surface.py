@@ -740,14 +740,15 @@ class VolSurface:
 
         grid_ivs = np.clip(grid_ivs, 0.02, 1.0)
 
-        # Fit bivariate spline to the SVI-smoothed grid
-        # Smoothing is minimal (s=0.0005) because the SVI values are already
-        # well-behaved; heavy smoothing would throw away the model's shape.
+        # Fit bivariate spline to the SVI-smoothed grid.
+        # Use s=0.005 (same as the cubic spline) — SVI per-slice fits already
+        # denoise in the strike direction, but the cross-tenor interpolation
+        # still needs smoothing to avoid amplifying residual kinks in d²C/dK².
         try:
             ky = min(3, len(ttm_svi) - 1)
             self._svi_spline = RectBivariateSpline(
                 m_knots, ttm_svi, grid_ivs,
-                kx=3, ky=ky, s=0.0005,
+                kx=3, ky=ky, s=0.005,
             )
             self._svi_ready = True
         except Exception:

@@ -145,6 +145,13 @@ with tab1:
                     q=params["q"],
                 )
                 st.session_state["vol_surf_obj"] = vol_surf
+
+                # Auto-build Dupire grids and cache them so they survive page
+                # navigation and are instantly available in Tab 3.
+                _dup_key = f"dupire_{params.get('snapshot_key','')}_{params['S0']}_{params['r']}"
+                if st.session_state.get("dupire_built_for") != _dup_key:
+                    st.session_state["dupire_cubic_grid"] = vol_surf.dupire_surface_grid(n_moneyness=25, n_ttm=15)
+                    st.session_state["dupire_built_for"] = _dup_key
             except Exception as e:
                 st.error(f"VolSurface error: {e}")
                 st.stop()
@@ -647,10 +654,17 @@ with tab3:
         "**This is not a bug; it is an honest reflection of data sparsity and interpolation limits.**"
     )
 
-    with st.spinner("Computing cubic-spline Dupire local vol surface…"):
-        try:
+    # Use cached Dupire grid from auto-build in Tab 1, or compute now
+    _cached_dup = st.session_state.get("dupire_cubic_grid")
+    if _cached_dup is not None:
+        M_d, T_d, LV_d = _cached_dup
+    else:
+        with st.spinner("Computing cubic-spline Dupire local vol surface…"):
             M_d, T_d, LV_d = vol_surf.dupire_surface_grid(n_moneyness=25, n_ttm=15)
-            LV_d_clipped = np.clip(LV_d * 100, 0.1, 80.0)
+        st.session_state["dupire_cubic_grid"] = (M_d, T_d, LV_d)
+    
+    try:
+        LV_d_clipped = np.clip(LV_d * 100, 0.1, 80.0)
 
             fig_cs = go.Figure(data=[go.Surface(
                 x=M_d, y=T_d, z=LV_d_clipped,
@@ -754,6 +768,9 @@ with tab3:
                         f"✅ SVI surface built — {svi_result['n_slices_fitted']} expiry slices fitted. "
                         f"Avg RMSE: {sum(svi_result['slice_rmse'].values())/max(len(svi_result['slice_rmse']), 1):.2f} vol pts."
                     )
+                    # Auto-build and cache SVI Dupire grid so it survives page navigation
+                    M_sv, T_sv, LV_sv = vol_surf.svi_dupire_surface_grid(n_moneyness=25, n_ttm=15)
+                    st.session_state["dupire_svi_grid"] = (M_sv, T_sv, LV_sv)
                     # Show per-slice RMSE
                     if svi_result["slice_rmse"]:
                         import pandas as pd
@@ -769,10 +786,17 @@ with tab3:
                 st.error(f"SVI build error: {e}")
 
     if vol_surf.svi_ready:
-        with st.spinner("Computing SVI-based Dupire local vol surface…"):
-            try:
+        # Use cached SVI Dupire from auto-build when SVI was fitted, or compute now
+        _cached_svi = st.session_state.get("dupire_svi_grid")
+        if _cached_svi is not None:
+            M_sv, T_sv, LV_sv = _cached_svi
+        else:
+            with st.spinner("Computing SVI-based Dupire local vol surface…"):
                 M_sv, T_sv, LV_sv = vol_surf.svi_dupire_surface_grid(n_moneyness=25, n_ttm=15)
-                LV_sv_clipped = np.clip(LV_sv * 100, 0.1, 80.0)
+            st.session_state["dupire_svi_grid"] = (M_sv, T_sv, LV_sv)
+
+        try:
+            LV_sv_clipped = np.clip(LV_sv * 100, 0.1, 80.0)
 
                 fig_svi = go.Figure(data=[go.Surface(
                     x=M_sv, y=T_sv, z=LV_sv_clipped,
