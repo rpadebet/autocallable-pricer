@@ -365,6 +365,7 @@ def run_pricers(params, ac, show_paths, track_conv, dupire_surface_type: str = "
                 heston_params=heston_params,
                 jump_params=jump_params,
                 local_vol_interp=local_vol_interp,
+                n_steps_per_year=params["n_steps"],
             )
             results["mc"] = mcp.price(
                 return_paths=show_paths,
@@ -388,6 +389,7 @@ def run_pricers(params, ac, show_paths, track_conv, dupire_surface_type: str = "
                 heston_params=heston_params,
                 jump_params=jump_params,
                 local_vol_interp=local_vol_interp,
+                n_steps_per_year=params["n_steps"],
             )
             results["sv"] = svp.price(
                 return_paths=show_paths,

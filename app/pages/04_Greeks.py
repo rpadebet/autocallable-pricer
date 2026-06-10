@@ -233,7 +233,7 @@ with tab1:
         - Survival MC dots cluster tightly at all ε
         """)
 
-    if run_delta or "greeks_delta" in st.session_state.get("cache", {}):
+    if run_delta or "greeks_delta_mc" in st.session_state:
         with col1:
             if run_delta or st.session_state.get("greeks_delta_key") != cache_key:
                 eps_fracs = np.array([0.0005, 0.001, 0.002, 0.005, 0.01,
