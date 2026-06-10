@@ -510,19 +510,25 @@ with tab1:
 
     # ── Survival MC methodology note for non-flat vol ──────────────────
     _svm = params.get("vol_model", "flat")
+    if _svm == "local":
+        _svm_note = (
+            "Under local vol, \u03c3 = \u03c3(S,t) varies with the spot level inside the "
+            "quarter, so the analytical survival probability p\u2c7c is approximate.  "
+        )
+    elif _svm == "bates":
+        _svm_note = (
+            "Under Bates, Merton jumps alter the spot-path distribution in ways "
+            "not captured by the analytical p\u2c7c formula \u2014 specifically, jumps can "
+            "push the spot below the protection (knock-in) barrier, which Survival "
+            "MC does not account for in the terminal payoff.  "
+        )
     if _svm in ("local", "bates"):
         _svm_label = "Local vol" if _svm == "local" else "Bates"
         st.info(
-            f"ℹ️ **Survival MC under {_svm_label}** — The one-step survival algorithm "
-            f"(Alm et al. 2013, Algorithm 1) assumes **lognormal GBM with constant σ** "
+            f"\u2139\ufe0f **Survival MC under {_svm_label}** \u2014 The one-step survival algorithm "
+            f"(Alm et al. 2013, Algorithm 1) assumes **lognormal GBM with constant \u03c3** "
             f"over each observation interval.  "
-            f"{'Under local vol, σ = σ(S,t) varies with the spot level inside the '
-             f'quarter, so the analytical survival probability pⱼ is approximate.  '
-             if _svm == 'local' else
-             f'Under Bates, Merton jumps alter the spot-path distribution in ways '
-             f'not captured by the analytical pⱼ formula — specifically, jumps can '
-             f'push the spot below the protection (knock-in) barrier, which Survival '
-             f'MC does not account for in the terminal payoff.'}  "
+            f"{_svm_note}"
             f"Standard MC and FDM are the ground truth for this model. "
             f"The gap between Survival MC and Standard MC quantifies the importance "
             f"of these model features for pricing autocallables."

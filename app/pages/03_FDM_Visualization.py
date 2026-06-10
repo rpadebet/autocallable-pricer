@@ -84,9 +84,10 @@ with c1:
     run_fdm = st.button("▶ Run FD + Build Grid", type="primary", use_container_width=True)
 
 _vol_label = params.get("vol_model", "flat").replace("local", "Dupire Local Vol").title()
+_vol_str = _vol_label if params.get("vol_model") != "flat" else f"Flat \u03c3 = {params['sigma']*100:.1f}%"
 st.caption(
-    f"Grid: Nₓ = {params['N_x']} | Nτ = {params['N_tau']} | x_min = {params['x_min']} | "
-    f"Vol: {_vol_label if params.get('vol_model') != 'flat' else f'σ = {params['sigma']*100:.1f}%'} | "
+    f"Grid: N\u2093 = {params['N_x']} | N\u03c4 = {params['N_tau']} | x_min = {params['x_min']} | "
+    f"Vol: {_vol_str} | "
     f"r = {params['r']*100:.2f}%"
 )
 

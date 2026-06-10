@@ -662,63 +662,62 @@ with tab3:
         with st.spinner("Computing cubic-spline Dupire local vol surface…"):
             M_d, T_d, LV_d = vol_surf.dupire_surface_grid(n_moneyness=25, n_ttm=15)
         st.session_state["dupire_cubic_grid"] = (M_d, T_d, LV_d)
-    
     try:
         LV_d_clipped = np.clip(LV_d * 100, 0.1, 80.0)
 
-            fig_cs = go.Figure(data=[go.Surface(
-                x=M_d, y=T_d, z=LV_d_clipped,
-                colorscale="Viridis",
-                showscale=True,
-                colorbar=dict(title="Local Vol (%)", thickness=15),
-                hovertemplate=(
-                    "Moneyness: %{x:.2f}<br>"
-                    "TTM: %{y:.2f}y<br>"
-                    "Local Vol: %{z:.1f}%<extra></extra>"
-                ),
-            )])
-            fig_cs.update_layout(
-                title="Cubic-Spline Dupire Local Vol σ_loc(K/S₀, T)",
-                scene=dict(
-                    xaxis_title="Moneyness (K/S₀)",
-                    yaxis_title="TTM (years)",
-                    zaxis_title="Local Vol (%)",
-                    camera=dict(eye=dict(x=1.5, y=-1.5, z=1.2)),
-                ),
-                height=560,
-                margin=dict(t=60, b=20),
-            )
-            st.plotly_chart(fig_cs, use_container_width=True)
+        fig_cs = go.Figure(data=[go.Surface(
+            x=M_d, y=T_d, z=LV_d_clipped,
+            colorscale="Viridis",
+            showscale=True,
+            colorbar=dict(title="Local Vol (%)", thickness=15),
+            hovertemplate=(
+                "Moneyness: %{x:.2f}<br>"
+                "TTM: %{y:.2f}y<br>"
+                "Local Vol: %{z:.1f}%<extra></extra>"
+            ),
+        )])
+        fig_cs.update_layout(
+            title="Cubic-Spline Dupire Local Vol \u03c3_loc(K/S\u2080, T)",
+            scene=dict(
+                xaxis_title="Moneyness (K/S\u2080)",
+                yaxis_title="TTM (years)",
+                zaxis_title="Local Vol (%)",
+                camera=dict(eye=dict(x=1.5, y=-1.5, z=1.2)),
+            ),
+            height=560,
+            margin=dict(t=60, b=20),
+        )
+        st.plotly_chart(fig_cs, use_container_width=True)
 
-            # ATM comparison
-            ttm_range = np.linspace(0.2, 2.5, 20)
-            lv_atm_cs = [vol_surf.dupire_local_vol(1.0, t) * 100 for t in ttm_range]
-            iv_atm    = [vol_surf.atm_vol(t) * 100 for t in ttm_range]
+        # ATM comparison
+        ttm_range = np.linspace(0.2, 2.5, 20)
+        lv_atm_cs = [vol_surf.dupire_local_vol(1.0, t) * 100 for t in ttm_range]
+        iv_atm    = [vol_surf.atm_vol(t) * 100 for t in ttm_range]
 
-            fig_atm = go.Figure()
-            fig_atm.add_trace(go.Scatter(x=ttm_range, y=lv_atm_cs,
-                               mode="lines", name="Cubic-Spline Dupire (ATM)",
-                               line=dict(color="#9C27B0", width=2)))
-            fig_atm.add_trace(go.Scatter(x=ttm_range, y=iv_atm,
-                               mode="lines", name="Implied Vol (ATM)",
-                               line=dict(color="#2196F3", width=2, dash="dash")))
-            fig_atm.update_layout(
-                title="ATM: Cubic-Spline Dupire vs Implied Vol",
-                xaxis_title="TTM (years)", yaxis_title="Vol (%)",
-                height=300, margin=dict(t=40, b=40),
-            )
-            st.plotly_chart(fig_atm, use_container_width=True)
+        fig_atm = go.Figure()
+        fig_atm.add_trace(go.Scatter(x=ttm_range, y=lv_atm_cs,
+                           mode="lines", name="Cubic-Spline Dupire (ATM)",
+                           line=dict(color="#9C27B0", width=2)))
+        fig_atm.add_trace(go.Scatter(x=ttm_range, y=iv_atm,
+                           mode="lines", name="Implied Vol (ATM)",
+                           line=dict(color="#2196F3", width=2, dash="dash")))
+        fig_atm.update_layout(
+            title="ATM: Cubic-Spline Dupire vs Implied Vol",
+            xaxis_title="TTM (years)", yaxis_title="Vol (%)",
+            height=300, margin=dict(t=40, b=40),
+        )
+        st.plotly_chart(fig_atm, use_container_width=True)
 
-            # Download
-            csv_dup_cs = vol_surf.to_csv_dupire(method="cubic", n_moneyness=25, n_ttm=15)
-            st.download_button(
-                label="⬇ Download Cubic-Spline Dupire Surface (CSV)",
-                data=csv_dup_cs,
-                file_name="dupire_localvol_cubicspline.csv",
-                mime="text/csv",
-            )
-        except Exception as e:
-            st.error(f"Cubic-spline Dupire error: {e}")
+        # Download
+        csv_dup_cs = vol_surf.to_csv_dupire(method="cubic", n_moneyness=25, n_ttm=15)
+        st.download_button(
+            label="\u2b07 Download Cubic-Spline Dupire Surface (CSV)",
+            data=csv_dup_cs,
+            file_name="dupire_localvol_cubicspline.csv",
+            mime="text/csv",
+        )
+    except Exception as e:
+        st.error(f"Cubic-spline Dupire error: {e}")
 
     # ── Section 2: SVI Dupire ─────────────────────────────────────────────────
     st.markdown("---")
@@ -798,86 +797,46 @@ with tab3:
         try:
             LV_sv_clipped = np.clip(LV_sv * 100, 0.1, 80.0)
 
-                fig_svi = go.Figure(data=[go.Surface(
-                    x=M_sv, y=T_sv, z=LV_sv_clipped,
-                    colorscale="Plasma",
-                    showscale=True,
-                    colorbar=dict(title="Local Vol (%)", thickness=15),
-                    hovertemplate=(
-                        "Moneyness: %{x:.2f}<br>"
-                        "TTM: %{y:.2f}y<br>"
-                        "SVI Local Vol: %{z:.1f}%<extra></extra>"
-                    ),
-                )])
-                fig_svi.update_layout(
-                    title="SVI Dupire Local Vol σ_loc(K/S₀, T) — Parametric Denoising",
-                    scene=dict(
-                        xaxis_title="Moneyness (K/S₀)",
-                        yaxis_title="TTM (years)",
-                        zaxis_title="Local Vol (%)",
-                        camera=dict(eye=dict(x=1.5, y=-1.5, z=1.2)),
-                    ),
-                    height=560,
-                    margin=dict(t=60, b=20),
-                )
-                st.plotly_chart(fig_svi, use_container_width=True)
+            fig_svi = go.Figure(data=[go.Surface(
+                x=M_sv, y=T_sv, z=LV_sv_clipped,
+                colorscale="Plasma",
+                showscale=True,
+                colorbar=dict(title="Local Vol (%)", thickness=15),
+                hovertemplate=(
+                    "Moneyness: %{x:.2f}<br>"
+                    "TTM: %{y:.2f}y<br>"
+                    "SVI Local Vol: %{z:.1f}%<extra></extra>"
+                ),
+            )])
+            fig_svi.update_layout(
+                title="SVI Dupire Local Vol \u03c3_loc(K/S\u2080, T) \u2014 Parametric Denoising",
+                scene=dict(
+                    xaxis_title="Moneyness (K/S\u2080)",
+                    yaxis_title="TTM (years)",
+                    zaxis_title="Local Vol (%)",
+                    camera=dict(eye=dict(x=1.5, y=-1.5, z=1.2)),
+                ),
+                height=560,
+                margin=dict(t=60, b=20),
+            )
+            st.plotly_chart(fig_svi, use_container_width=True)
 
-                # ATM overlay with cubic for comparison
-                ttm_range = np.linspace(0.2, 2.5, 20)
-                lv_atm_svi = [vol_surf.svi_dupire_local_vol_grid(
-                    np.array([1.0]), np.array([t]))[0, 0] * 100 for t in ttm_range]
-                lv_atm_cs  = [vol_surf.dupire_local_vol(1.0, t) * 100 for t in ttm_range]
-                iv_atm     = [vol_surf.atm_vol(t) * 100 for t in ttm_range]
+            # ATM overlay with cubic for comparison
+            ttm_range = np.linspace(0.2, 2.5, 20)
+            lv_atm_svi = [vol_surf.svi_dupire_local_vol_grid(
+                np.array([1.0]), np.array([t]))[0, 0] * 100 for t in ttm_range]
 
-                fig_atm2 = go.Figure()
-                fig_atm2.add_trace(go.Scatter(x=ttm_range, y=lv_atm_svi,
-                                   mode="lines", name="SVI Dupire (ATM)",
-                                   line=dict(color="#FF5722", width=2)))
-                fig_atm2.add_trace(go.Scatter(x=ttm_range, y=lv_atm_cs,
-                                   mode="lines", name="Cubic-Spline Dupire (ATM)",
-                                   line=dict(color="#9C27B0", width=2, dash="dot")))
-                fig_atm2.add_trace(go.Scatter(x=ttm_range, y=iv_atm,
-                                   mode="lines", name="Implied Vol (ATM)",
-                                   line=dict(color="#2196F3", width=2, dash="dash")))
-                fig_atm2.update_layout(
-                    title="ATM: SVI Dupire vs Cubic-Spline Dupire vs Implied Vol",
-                    xaxis_title="TTM (years)", yaxis_title="Vol (%)",
-                    height=320, margin=dict(t=40, b=40),
-                )
-                st.plotly_chart(fig_atm2, use_container_width=True)
+            # Download
+            csv_dup_svi = vol_surf.to_csv_dupire(method="svi", n_moneyness=25, n_ttm=15)
+            st.download_button(
+                label="\u2b07 Download SVI Dupire Surface (CSV)",
+                data=csv_dup_svi,
+                file_name="dupire_localvol_svi.csv",
+                mime="text/csv",
+            )
 
-                # SVI IV surface overlay to show smoothing
-                st.subheader("SVI Implied Vol Surface (for reference)")
-                M_svi_iv, T_svi_iv, IV_svi = vol_surf.svi_surface_grid(n_moneyness=30, n_ttm=20)
-                fig_svi_iv = go.Figure(data=[go.Surface(
-                    x=M_svi_iv, y=T_svi_iv, z=IV_svi * 100,
-                    colorscale="RdYlGn_r", showscale=True,
-                    colorbar=dict(title="IV (%)", thickness=15),
-                    hovertemplate="Moneyness: %{x:.2f}<br>TTM: %{y:.2f}y<br>SVI IV: %{z:.1f}%<extra></extra>",
-                )])
-                fig_svi_iv.update_layout(
-                    title="SVI-Smoothed Implied Vol Surface (input to SVI Dupire)",
-                    scene=dict(
-                        xaxis_title="Moneyness (K/S₀)",
-                        yaxis_title="TTM (years)",
-                        zaxis_title="Implied Vol (%)",
-                        camera=dict(eye=dict(x=1.5, y=-1.5, z=1.2)),
-                    ),
-                    height=500, margin=dict(t=60, b=20),
-                )
-                st.plotly_chart(fig_svi_iv, use_container_width=True)
-
-                # Download
-                csv_dup_svi = vol_surf.to_csv_dupire(method="svi", n_moneyness=25, n_ttm=15)
-                st.download_button(
-                    label="⬇ Download SVI Dupire Surface (CSV)",
-                    data=csv_dup_svi,
-                    file_name="dupire_localvol_svi.csv",
-                    mime="text/csv",
-                )
-
-            except Exception as e:
-                st.error(f"SVI Dupire error: {e}")
+        except Exception as e:
+            st.error(f"SVI Dupire error: {e}")
     else:
         st.info(
             "👆 Click **Build SVI Surface** to fit the parametric SVI model and generate "
