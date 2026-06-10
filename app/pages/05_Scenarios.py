@@ -398,4 +398,81 @@ with tab4:
     st.subheader("Value Surface — Price vs Spot × Volatility")
     st.markdown(
         "How does the autocallable price move as spot and vol change simultaneously? "
-        "Each cell is a separate MC price (N=1,000 p
+        "Each cell is a separate MC price (N=1,000 paths for speed)."
+    )
+
+    col1, col2 = st.columns([2, 1])
+    with col2:
+        run_surface = st.button("▶ Compute Surface", key="btn_surface",
+                                 type="primary", use_container_width=True)
+        n_spot = st.slider("Spot grid points", 5, 12, 7)
+        n_vol = st.slider("Vol grid points", 5, 10, 6)
+        st.caption(f"Total: {n_spot * n_vol} MC runs at N=1,000 paths each")
+        st.markdown("""
+        **Reading the surface:**
+        - Brighter = higher price
+        - Near the call barrier (spot ≈ 100%): vol has less impact — near-certain call
+        - Deep OTM (spot < protection): vol increases probability of knock-in → price falls
+        """)
+
+    if run_surface or "scenario_surface" in st.session_state:
+        cache_key = f"{params['security_name']}_{S0}_{r}_{q}"
+        if run_surface or st.session_state.get("surface_key") != cache_key:
+            spot_grid = np.linspace(S0 * 0.70, S0 * 1.20, n_spot)
+            vol_grid = np.linspace(0.10, 0.45, n_vol)
+
+            prices = np.zeros((n_vol, n_spot))
+            total = n_vol * n_spot
+
+            with col1:
+                prog = st.progress(0, text="Computing surface…")
+                k = 0
+                for i, vol in enumerate(vol_grid):
+                    for j, spot in enumerate(spot_grid):
+                        prices[i, j] = quick_price(
+                            ac, vol, r, q, spot=spot, n_paths=1000, seed=42
+                        )
+                        k += 1
+                        prog.progress(k / total, text=f"Run {k}/{total}…")
+                prog.empty()
+
+            st.session_state["scenario_surface"] = prices
+            st.session_state["scenario_spots"] = spot_grid
+            st.session_state["scenario_vols"] = vol_grid
+            st.session_state["surface_key"] = cache_key
+
+        prices = st.session_state["scenario_surface"]
+        spot_grid = st.session_state["scenario_spots"]
+        vol_grid = st.session_state["scenario_vols"]
+
+        with col1:
+            spot_labels = [f"{s/ac.S_ref:.0%}" for s in spot_grid]
+            vol_labels = [f"{v:.0%}" for v in vol_grid]
+
+            fig = go.Figure(go.Heatmap(
+                z=prices,
+                x=spot_labels,
+                y=vol_labels,
+                colorscale="RdYlGn",
+                colorbar=dict(title="Price ($)"),
+                hovertemplate="Spot: %{x}<br>Vol: %{y}<br>Price: $%{z:,.2f}<extra></extra>",
+                text=[[f"${p:,.0f}" for p in row] for row in prices],
+                texttemplate="%{text}",
+                textfont=dict(size=11),
+            ))
+            fig.update_layout(
+                xaxis_title="Spot / S_ref",
+                yaxis_title="Implied Vol (σ)",
+                title=f"Value Surface — {ac.name}",
+                height=460,
+                margin=dict(t=60, b=40),
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+    else:
+        with col1:
+            st.info("Click **▶ Compute Surface** to generate the price heatmap.")
+            st.caption(
+                "Each cell is an independent MC run (N=1,000 paths). "
+                "Expect ~30 seconds for a 7×6 grid on Streamlit Cloud."
+            )

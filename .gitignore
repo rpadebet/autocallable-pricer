@@ -10,7 +10,4 @@ venv/
 *.log
 pytest-cache-files-*
 CLAUDE.md
-NEXT_
-
-# Presentation slide screenshots (working files from PPTX creation — not source code)
-presentation/slide_screenshots/
+NEXT_SESSION.md

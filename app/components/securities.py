@@ -139,13 +139,13 @@ SECURITIES: dict[str, dict[str, Any]] = {
         "maturity_years": 2.0,
 
         # --- Step-down barrier schedule ---
-        # Format: list of (month_number_from_start, barrier_level)
-        # The call barrier steps down at these points
-        "call_barrier": 1.00,  # initial barrier; stepped_barriers overrides
+        # 0-based period indices. Description: 100% initial, drops to 95%
+        # after year 1 (period 12), drops to 90% after year 1.5 (period 18).
+        "call_barrier": 1.00,
         "stepped_barriers": [
-            (0, 1.00),    # months 1-4: 100% barrier
-            (5, 0.95),    # months 5-8 (after 4 quarters): 95% barrier
-            (9, 0.90),    # months 9+: 90% barrier
+            (0, 1.00),    # periods 1–12:  100% barrier
+            (12, 0.95),   # periods 13–18: 95% barrier
+            (18, 0.90),   # periods 19–24: 90% barrier
         ],
         "coupon_barrier": 0.75,
         "protection_barrier": 0.75,
@@ -267,4 +267,13 @@ def get_security_summary(name: str) -> dict[str, str]:
     obs_freq = sec["obs_frequency"].capitalize()
 
     summary = {
-        "Structure":   sec["structure_type"].replace("_", "-").titl
+        "Structure":   sec["structure_type"].replace("_", "-").title(),
+        "Underlying":  underlyings,
+        "Maturity":    f"{sec['maturity_years']:.0f} years",
+        "Observations": obs_freq,
+        "Call Barrier": f"{sec['call_barrier']*100:.0f}%",
+        "Coupon":       coupon_str,
+        "Protection":   f"{sec['protection_barrier']*100:.0f}%",
+        "Notional":     f"${sec['notional']:,.0f}",
+    }
+    return summary

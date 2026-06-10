@@ -360,4 +360,3 @@ Columbia IEOR lecture notes. Eq. 23: characteristic function (Albrecher form —
 **Paper 3** — Alm, Harrach, Harrach & Keller (2013). *A Monte Carlo Pricing Algorithm for Autocallables.*
 Journal of Computational Finance. Algorithm 1: One-step survival MC.
     """)
-                                                                                                                                                                                                                                                                                                                                                                          

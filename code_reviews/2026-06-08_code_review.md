@@ -450,3 +450,11 @@ In function `calibrate_bates()`.
 
 | Paper Reference | Implementation | Status |
 |-----------------|---------------|--------|
+| §2 Eq. 2.3 Standard MC | `mc_standard.py` `_simulate_paths()` | OK — GBM exact increments |
+| Algorithm 1 One-step survival | `mc_survival.py` `_price_one_path()` | OK — matches paper |
+| §2.2 GHK importance sampling (basket) | Not implemented | OK — deferred per CLAUDE.md |
+| Stable differentiation claim | `_price_one_path` formula | OK — barrier handled analytically |
+
+---
+
+*Review saved to `code_reviews/2026-06-08_code_review.md`*

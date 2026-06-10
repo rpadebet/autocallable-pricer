@@ -329,14 +329,15 @@ with tab3:
     else:
         S_ref = ac.S_ref
 
-        # Delta = dV/dS at t=0 (index 0)
-        V_t0 = V_grid[:, 0]
+        # Delta = dV/dS at t=0 (last column = today, first column = maturity)
+        V_t0 = V_grid[:, -1]
         dV = np.gradient(V_t0, S_axis)  # first derivative
         d2V = np.gradient(dV, S_axis)   # second derivative (Gamma)
 
-        # Theta = (V(t=dt) - V(t=0)) / dt — positive = loses value over time
-        dt_step = t_axis[1] - t_axis[0] if len(t_axis) > 1 else 1.0
-        theta_grid = (V_grid[:, 1] - V_grid[:, 0]) / dt_step if len(t_axis) > 1 else np.zeros_like(V_t0)
+        # Theta = (V(t=0) - V(t=dt)) / dt — positive = gains value over time at t=0
+        # t_axis runs T→0 (maturity→today), so t[-2] > t[-1]
+        dt_step = t_axis[-2] - t_axis[-1] if len(t_axis) > 1 else 1.0
+        theta_grid = (V_grid[:, -2] - V_grid[:, -1]) / dt_step if len(t_axis) > 1 else np.zeros_like(V_t0)
 
         # Filter to display range
         mask_s = (S_axis >= 0.5 * S_ref) & (S_axis <= 1.8 * S_ref)
@@ -707,4 +708,43 @@ information from the *current* time level:
 $$u^{n+1}_j = u^n_j + \\rho \\left(u^n_{j+1} - 2u^n_j + u^n_{j-1}\\right), \\quad \\rho = \\frac{\\Delta\\tau}{\\Delta x^2}$$
 
 **Requirement**: ρ ≤ ½ (Courant–Friedrichs–Lewy condition). If violated, rounding
-errors grow exponentially each step — the scheme is *c
+errors grow exponentially each step — the scheme is *conditionally stable*.
+
+**Crank-Nicolson**
+
+CN averages the explicit and implicit updates, using information from *both* the
+current and next time levels:
+
+$$u^{n+1}_j - u^n_j = \\frac{\\rho}{2}\\left[(u^{n+1}_{j+1} - 2u^{n+1}_j + u^{n+1}_{j-1}) + (u^n_{j+1} - 2u^n_j + u^n_{j-1})\\right]$$
+
+Rearranging gives a **tridiagonal linear system** $A \\cdot u^{n+1} = d$ per time step,
+solved in O(N_x) using the Thomas algorithm.
+
+**CN is unconditionally stable** for any ρ — no CFL restriction. It is also
+**second-order accurate in time** (O(Δτ²) vs O(Δτ) for explicit), so it achieves the
+same accuracy with far fewer time steps.
+
+| Property | Explicit | Crank-Nicolson |
+|----------|----------|----------------|
+| Stability | Conditional (ρ ≤ 0.5) | Unconditional |
+| Time accuracy | O(Δτ) | O(Δτ²) |
+| Space accuracy | O(Δx²) | O(Δx²) |
+| Per-step cost | O(N_x) — vector add | O(N_x) — Thomas solve |
+| Steps needed for same accuracy | High | Low |
+
+**When to use each**
+
+- **Explicit**: Simpler to implement and debug; direct connection to Paper 1's derivation;
+  good for education and validation. Fine for moderate grids (N_x ≤ 200) where the
+  CFL constraint is not binding.
+
+- **Crank-Nicolson**: Preferred for production use. Fewer time steps at the same
+  accuracy level means faster pricing at large grids. Essential when N_x > 500 or
+  when very fine time resolution is needed (e.g., daily observation dates).
+""")
+
+    # ── Refresh notice ─────────────────────────────────────────────────────────
+    st.caption(
+        "Results cached for this session. Click **Run Scheme Comparison** again to "
+        "recompute with updated sidebar parameters."
+    )

@@ -794,11 +794,28 @@ def continuous_autocall_closedform(
     # Log-ratio of barrier to spot
     log_BS = np.log(B / S0)
 
-    # d1 and d2 for first-passage calculation
-    # These come from the inverse Gaussian / Bachelier formula for barrier crossing
-    d1 = (-log_BS + nu * T) / (sigma * np.sqrt(T))
+    # d1 and d2 for first-passage calculation (reflection principle for GBM)
+    d1 = (log_BS - nu * T) / (sigma * np.sqrt(T))
     d2 = (-log_BS - nu * T) / (sigma * np.sqrt(T))
 
     # Probability of NOT crossing the barrier by time T
     # Using the reflection principle result for GBM
-    p_no_cross = norm.cdf(d1) - np.exp
+    p_no_cross = norm.cdf(d1) - np.exp(2 * nu * log_BS / sigma ** 2) * norm.cdf(d2)
+    p_cross = 1.0 - p_no_cross
+
+    # Approximate price:
+    #   Component 1: called paths -- receive notional at call time (approximate mid-T)
+    expected_call_time = T / 2  # simplification; actual is E[tau | tau < T]
+    pv_call = p_cross * notional * np.exp(-r * expected_call_time)
+
+    #   Component 2: uncalled paths -- receive notional at maturity
+    pv_no_call = p_no_cross * notional * np.exp(-r * T)
+
+    #   Coupon stream: simplified as coupon rate * expected time under the barrier,
+    #   discounted at the midpoint. expected_life blends the two exit scenarios.
+    expected_life = p_cross * expected_call_time + p_no_cross * T
+    pv_coupons = coupon_pa * notional * expected_life * np.exp(-r * expected_life / 2.0)
+
+    price = pv_call + pv_no_call + pv_coupons
+    # Clip to sane range: floor at 0, cap at par + all coupons (can't exceed)
+    return float(np.clip(price, 0.0, notional * (1.0 + coupon_pa * T)))

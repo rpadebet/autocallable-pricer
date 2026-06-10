@@ -600,4 +600,10 @@ Sandbox count: 57/59 — 2 pre-existing errors from cloud-only OneDrive file tru
   - `"heston"` — Euler-Maruyama CIR variance SDE (full truncation); correlated Brownian motion via Cholesky decomposition
   - `"bates"` — Heston variance + Poisson jump compound; jump log-return sampled as N(N_jumps·μ_J, N_jumps·σ_J²)
   - Sub-stepping: non-flat models use `n_steps_per_year=52` (weekly) sub-steps per observation interval for discretisation accuracy
-  - Antithetic variates disabled automatically for non-flat models (paired sampling breaks under stochas
+  - Antithetic variates disabled automatically for non-flat models (paired sampling breaks under stochastic variance)
+- **`app/mc_survival.py`**: Extended `MCSurvivalPricer` to support `"flat"`, `"local"`, `"heston"`, `"bates"`:
+  - Local vol: `dupire_local_vol(S_t/S0, t)` lookup at each observation step
+  - Heston: `_advance_heston_variance()` Euler-Maruyama with sub-steps; conditions on realised v_t for the survival probability formula
+  - Bates: Heston variance + `_jump_survival_correction()` which computes `exp(-λ·Δt·P(jump crosses barrier))`
+- **`app/pde_pricer.py`**: Added `vol_model="local"` path in `FDPricer`:
+  - New `_price_local_vol()` method: direct log-price PDE `∂V/∂τ = (�

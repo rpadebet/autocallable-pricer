@@ -490,4 +490,15 @@ class TestFallback:
                 iv_svi   = vol_surf.svi_implied_vol(m, t)
                 iv_cubic = vol_surf.implied_vol(m, t)
                 assert iv_svi == iv_cubic, (
-                    f"svi_implied_vol({m}, {t}) = {iv_svi:.4f
+                    f"svi_implied_vol({m}, {t}) = {iv_svi:.4f} "
+                    f"!= implied_vol = {iv_cubic:.4f} when SVI not built"
+                )
+
+    def test_svi_surface_grid_fallback_finite(self, vol_surf):
+        """
+        svi_surface_grid must return finite values even when SVI is not built
+        (falls back to cubic spline).
+        """
+        assert not vol_surf.svi_ready
+        M, T, IV = vol_surf.svi_surface_grid(n_moneyness=8, n_ttm=6)
+        assert np.all(np.isfinite(IV)), "Non-finite IV in svi_surface_grid fallback"

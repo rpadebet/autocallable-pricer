@@ -795,3 +795,152 @@ with tab3:
 
             if call_idx is not None:
                 # Path called at obs date call_idx
+                color = "rgba(33, 150, 243, 0.5)"  # blue with alpha
+                name = "Called" if called_count == 0 else None
+                called_count += 1
+            else:
+                color = "rgba(150, 150, 150, 0.4)"  # gray with alpha
+                name = "Survived" if survived_count == 0 else None
+                survived_count += 1
+
+            fig.add_trace(go.Scatter(
+                x=path_t,
+                y=list(path),
+                mode="lines",
+                line=dict(color=color, width=1),
+                name=name,
+                showlegend=(name is not None),
+                hovertemplate=(
+                    f"Path {i+1}<br>"
+                    "t = %{x:.2f}y<br>"
+                    "S = %{y:,.1f}<extra></extra>"
+                ),
+            ))
+
+        fig.update_layout(
+            title=(
+                f"30 Simulated Paths — {called_count} called early, "
+                f"{survived_count} survived to maturity"
+            ),
+            xaxis=dict(title="Time (years)", tickformat=".1f"),
+            yaxis=dict(title="Spot Level S(t)"),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02),
+            height=500,
+            margin=dict(t=80, b=50),
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+        # Summary stats
+        total_paths = mc_res.n_paths
+        if mc_res.call_times:
+            n_called = sum(1 for c in mc_res.call_times if c is not None)
+            call_pct = n_called / len(mc_res.call_times) * 100
+        else:
+            call_pct = float("nan")
+
+        st.caption(
+            f"Showing 30 of {total_paths:,} paths. "
+            f"In full simulation: ~{call_pct:.1f}% called early (estimated from stored paths)."
+        )
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# TAB 4 — TERM STRUCTURE (Call Probability + Expected Payoff by Date)
+# ──────────────────────────────────────────────────────────────────────────────
+with tab4:
+    st.subheader("Term Structure of Call Probabilities")
+    _cp_vol_model = params.get("vol_model", "flat")
+    _cp_sigma = fd_res.call_probs and params.get("sigma", 0.20)  # fallback
+    _heston_params = params.get("heston_params", {})
+    if _cp_vol_model in ("heston", "bates") and _heston_params:
+        import math as _math
+        _eff_sigma = _math.sqrt(_heston_params.get("v0", params["sigma"] ** 2))
+        _model_label = "Heston" if _cp_vol_model == "heston" else "Bates"
+        st.caption(
+            f"Analytical call probabilities using \u03c3\u209a\u209c\u209a = {_eff_sigma*100:.1f}% "
+            f"(√v\u2080 from {_model_label} calibration). "
+            "Exact model-consistent probabilities would require simulation."
+        )
+    else:
+        st.caption("FD-derived call probability at each observation date (analytical — no MC noise).")
+
+    if not fd_res or not fd_res.call_probs:
+        st.info("FD pricing must succeed to show term structure.")
+    else:
+        obs_dates = fd_res.obs_dates
+        call_probs = fd_res.call_probs
+        cumulative = np.cumsum(call_probs)
+        survival_prob = 1.0 - cumulative
+
+        # Left panel — table
+        col_left, col_right = st.columns([1, 2])
+        with col_left:
+            st.markdown("**Observation Date Analysis**")
+            table_rows = []
+            for i, (t, p) in enumerate(zip(obs_dates, call_probs)):
+                table_rows.append({
+                    "Date (yr)": f"{t:.3f}",
+                    "Call Barrier": f"{ac.call_barrier_at_period(i)*100:.1f}%",
+                    "P(call at t)": f"{p*100:.2f}%",
+                    "P(survive)": f"{(1-cumulative[i])*100:.2f}%",
+                })
+            import pandas as pd
+            df_table = pd.DataFrame(table_rows)
+            st.dataframe(df_table, use_container_width=True, hide_index=True)
+
+        # Right panel — chart
+        with col_right:
+            fig = make_subplots(
+                rows=2, cols=1,
+                subplot_titles=("Call Probability per Observation Date",
+                                "Cumulative Call Probability & Survival"),
+                shared_xaxes=True,
+                vertical_spacing=0.12,
+            )
+
+            # Top: per-period bar chart
+            fig.add_trace(go.Bar(
+                x=[f"{t:.2f}y" for t in obs_dates],
+                y=[p * 100 for p in call_probs],
+                name="P(call at t)",
+                marker_color="#2196F3",
+                text=[f"{p*100:.1f}%" for p in call_probs],
+                textposition="outside",
+            ), row=1, col=1)
+
+            # Bottom: cumulative call + survival
+            fig.add_trace(go.Scatter(
+                x=[f"{t:.2f}y" for t in obs_dates],
+                y=[c * 100 for c in cumulative],
+                mode="lines+markers",
+                name="Cumulative P(call)",
+                line=dict(color="#FF5722", width=2),
+            ), row=2, col=1)
+            fig.add_trace(go.Scatter(
+                x=[f"{t:.2f}y" for t in obs_dates],
+                y=[(1 - c) * 100 for c in cumulative],
+                mode="lines+markers",
+                name="P(survive to maturity)",
+                line=dict(color="#4CAF50", width=2, dash="dash"),
+            ), row=2, col=1)
+
+            fig.update_yaxes(title_text="Probability (%)", row=1, col=1)
+            fig.update_yaxes(title_text="Probability (%)", range=[0, 105], row=2, col=1)
+            fig.update_layout(
+                height=480,
+                showlegend=True,
+                legend=dict(orientation="h", yanchor="bottom", y=1.05),
+                margin=dict(t=60, b=40),
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+        # Expected remaining life
+        if call_probs:
+            expected_life = sum(t * p for t, p in zip(obs_dates, call_probs))
+            expected_life += obs_dates[-1] * float(1 - cumulative[-1])  # maturity if never called
+            st.metric(
+                "Expected Life (duration-weighted)",
+                f"{expected_life:.3f} years",
+                help="Σ t_i × P(called at t_i) + T × P(survives to maturity). "
+                     "Compare to nominal maturity of " + f"{ac.maturity_years}Y.",
+            )
