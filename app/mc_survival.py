@@ -367,7 +367,8 @@ class MCSurvivalPricer:
                 term_pv = (max(s / self.S_ref, self.ac.protection_floor)
                            * self.ac.notional * math.exp(-self.r * T))
             else:
-                term_pv = self.ac.notional * math.exp(-self.r * T)
+                coupon = self.ac.coupon_per_period() if s >= self.ac.coupon_barrier * self.S_ref else 0.0
+                term_pv = (self.ac.notional + coupon) * math.exp(-self.r * T)
             payoff += L * term_pv
 
         return payoff, spots, first_call_idx
@@ -512,11 +513,13 @@ class MCSurvivalPricer:
         if active.any():
             T = self.ac.maturity_years
             ki = s < self.ac.protection_barrier * self.S_ref
+            cpn_cond = s >= self.ac.coupon_barrier * self.S_ref
+            cpn = np.where(cpn_cond, self.ac.coupon_per_period(), 0.0)
             term_pv = np.where(
                 ki,
                 np.maximum(s / self.S_ref, self.ac.protection_floor)
                     * self.ac.notional * math.exp(-self.r * T),
-                self.ac.notional * math.exp(-self.r * T),
+                (self.ac.notional + cpn) * math.exp(-self.r * T),
             )
             payoffs += active * L * term_pv
 
@@ -538,17 +541,4 @@ class MCSurvivalPricer:
         call_indices = None
         if return_paths:
             stored_paths = []
-            call_indices = []
-            for idx in range(min(50, N)):
-                _, sp, ci = self._price_one_path(store=True)
-                stored_paths.append(sp)
-                call_indices.append(ci)
-
-        price_est = float(payoffs.mean())
-        se = float(payoffs.std(ddof=1) / math.sqrt(N)) if N > 1 else 0.0
-        return MCResult(
-            price=price_est, std_err=se,
-            ci_low=price_est - 1.96*se, ci_high=price_est + 1.96*se,
-            n_paths=N, paths=stored_paths, call_times=call_indices,
-            convergence_series=conv_series,
-        )
+            call_indices = []

@@ -965,32 +965,4 @@ class VolSurface:
         m_axis = M[0, :]
         t_axis = T[:, 0]
         cols = [f"M={m:.3f}" for m in m_axis]
-        df_out = pd.DataFrame(LV * 100, index=t_axis, columns=cols)
-        df_out.index.name = "TTM_years"
-        label = "SVI_Dupire_LocalVol_pct" if method == "svi" else "CubicSpline_Dupire_LocalVol_pct"
-        return f"# {label}\n" + df_out.to_csv(float_format="%.4f")
-
-    def calibration_rmse(self, heston_model) -> float:
-        """
-        Compute RMSE between Heston model IVs and market IVs.
-
-        Used in the Vol Surface page to display how well Heston fits.
-
-        Args:
-            heston_model: A fitted HestonModel instance.
-
-        Returns:
-            Root-mean-squared error in vol points (e.g. 0.015 = 1.5 vol points).
-        """
-        df = self.raw_df.head(200)  # Limit for speed
-        errors = []
-        for _, row in df.iterrows():
-            try:
-                heston_iv = heston_model.implied_vol(row["moneyness"], row["ttm_years"])
-                errors.append((heston_iv - row["impliedVolatility"]) ** 2)
-            except Exception:
-                pass
-
-        if not errors:
-            return 0.0
-        return float(np.sqrt(np.mean(errors)))
+        df_out = pd.DataFrame(LV * 100, inde

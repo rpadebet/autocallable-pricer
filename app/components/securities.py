@@ -267,13 +267,4 @@ def get_security_summary(name: str) -> dict[str, str]:
     obs_freq = sec["obs_frequency"].capitalize()
 
     summary = {
-        "Structure":   sec["structure_type"].replace("_", "-").title(),
-        "Underlying":  underlyings,
-        "Maturity":    f"{sec['maturity_years']:.0f} years",
-        "Observations": obs_freq,
-        "Call Barrier": f"{sec['call_barrier']*100:.0f}%",
-        "Coupon":       coupon_str,
-        "Protection":   f"{sec['protection_barrier']*100:.0f}%",
-        "Notional":     f"${sec['notional']:,.0f}",
-    }
-    return summary
+        "Structure":   sec["structure_type"].replace("_", "-").titl

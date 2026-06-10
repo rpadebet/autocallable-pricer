@@ -125,4 +125,4 @@ python -m pytest tests/ -v
 
 ## Key Design Decisions
 
-**Static market data** — The app demonstrates what you can do with real options data, not how to build a data pipeline. Pre-collecting snapshots makes the demo relia
+**Static market data** — The app demon

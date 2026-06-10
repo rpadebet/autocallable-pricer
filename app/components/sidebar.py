@@ -632,35 +632,4 @@ def render_sidebar(page_name: str = "") -> dict:
 
     # BACKUP SAVE: persist all user-set values to a non-widget session_state key.
     # WHY: Streamlit's widget-state cleanup removes keys for widgets that weren't
-    # rendered in the PREVIOUS run (e.g., after a page navigation). A non-widget key
-    # is NEVER removed by Streamlit. On the next render, _ensure_sidebar_defaults()
-    # reads this backup and restores the user's last-used values instead of the
-    # hardcoded factory defaults. This is the belt-and-suspenders layer on top of
-    # the config.toml fileWatcherType=none fix.
-    st.session_state["_sidebar_backup"] = {
-        "snapshot_key_stored": selected_key,
-        "r":                   r,
-        "q":                   q,
-        "S0":                  S0,
-        "security_name":       sec_name_display,
-        "vol_model_label":     vol_model_label,
-        "sigma_flat":          sigma_flat,
-        "use_calibrated_heston": use_calibrated,
-        "v0":                  v0,
-        "kappa":               kappa,
-        "theta":               theta,
-        "gamma":               gamma,
-        "rho":                 rho,
-        "lam_j":               lam_j,
-        "mu_j":                mu_j,
-        "sig_j":               sig_j,
-        "n_paths":             n_paths,
-        "n_steps":             n_steps,
-        "seed":                seed,
-        "antithetic":          antithetic,
-        "N_x":                 N_x,
-        "N_tau":               N_tau,
-        "x_min":               x_min,
-    }
-
-    return params
+    # rendered in the PREVIOUS run (e.g

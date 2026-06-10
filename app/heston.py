@@ -1291,39 +1291,4 @@ def calibrate_bates(
             heston_init.get("theta", 0.04),
             heston_init.get("gamma", 0.3),
             heston_init.get("rho", -0.7),
-            0.5, -0.05, 0.10,
-        ]
-    else:
-        x0 = [0.04, 1.5, 0.04, 0.3, -0.7, 0.5, -0.05, 0.10]
-
-    x0c = [float(np.clip(x0[i], bounds[i][0], bounds[i][1])) for i in range(8)]
-    best_params = x0c
-    best_val = objective(x0c)
-
-    try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            res = minimize(
-                objective, x0c, method="L-BFGS-B", bounds=bounds,
-                options={"maxiter": 200, "ftol": 1e-6},
-            )
-        if res.fun < best_val:
-            best_val = res.fun
-            best_params = list(res.x)
-    except Exception:
-        pass
-
-    v0, kappa, theta, gamma, rho, lam, mu_J, sig_J = best_params
-    return {
-        "v0":               round(float(v0), 6),
-        "kappa":            round(float(kappa), 4),
-        "theta":            round(float(theta), 6),
-        "gamma":            round(float(gamma), 4),
-        "rho":              round(float(rho), 4),
-        "lam":              round(float(lam), 4),
-        "mu_J":             round(float(mu_J), 4),
-        "sig_J":            round(float(sig_J), 4),
-        "rmse_vol_pts":     round(float(math.sqrt(max(best_val, 0)) * 100), 2),
-        "feller_satisfied": bool(kappa * theta > 0.5 * gamma ** 2),
-        "n_quotes":         len(df),
-    }
+            0.5, -0.0

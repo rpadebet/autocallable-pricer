@@ -707,43 +707,4 @@ information from the *current* time level:
 $$u^{n+1}_j = u^n_j + \\rho \\left(u^n_{j+1} - 2u^n_j + u^n_{j-1}\\right), \\quad \\rho = \\frac{\\Delta\\tau}{\\Delta x^2}$$
 
 **Requirement**: ρ ≤ ½ (Courant–Friedrichs–Lewy condition). If violated, rounding
-errors grow exponentially each step — the scheme is *conditionally stable*.
-
-**Crank-Nicolson**
-
-CN averages the explicit and implicit updates, using information from *both* the
-current and next time levels:
-
-$$u^{n+1}_j - u^n_j = \\frac{\\rho}{2}\\left[(u^{n+1}_{j+1} - 2u^{n+1}_j + u^{n+1}_{j-1}) + (u^n_{j+1} - 2u^n_j + u^n_{j-1})\\right]$$
-
-Rearranging gives a **tridiagonal linear system** $A \\cdot u^{n+1} = d$ per time step,
-solved in O(N_x) using the Thomas algorithm.
-
-**CN is unconditionally stable** for any ρ — no CFL restriction. It is also
-**second-order accurate in time** (O(Δτ²) vs O(Δτ) for explicit), so it achieves the
-same accuracy with far fewer time steps.
-
-| Property | Explicit | Crank-Nicolson |
-|----------|----------|----------------|
-| Stability | Conditional (ρ ≤ 0.5) | Unconditional |
-| Time accuracy | O(Δτ) | O(Δτ²) |
-| Space accuracy | O(Δx²) | O(Δx²) |
-| Per-step cost | O(N_x) — vector add | O(N_x) — Thomas solve |
-| Steps needed for same accuracy | High | Low |
-
-**When to use each**
-
-- **Explicit**: Simpler to implement and debug; direct connection to Paper 1's derivation;
-  good for education and validation. Fine for moderate grids (N_x ≤ 200) where the
-  CFL constraint is not binding.
-
-- **Crank-Nicolson**: Preferred for production use. Fewer time steps at the same
-  accuracy level means faster pricing at large grids. Essential when N_x > 500 or
-  when very fine time resolution is needed (e.g., daily observation dates).
-""")
-
-    # ── Refresh notice ─────────────────────────────────────────────────────────
-    st.caption(
-        "Results cached for this session. Click **Run Scheme Comparison** again to "
-        "recompute with updated sidebar parameters."
-    )
+errors grow exponentially each step — the scheme is *c

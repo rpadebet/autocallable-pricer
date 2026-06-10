@@ -396,7 +396,6 @@ class MCStandardPricer:
         called = np.zeros(n_paths, dtype=bool)
 
         ki_barrier = self.ac.protection_barrier * self.S_ref
-        knocked_in = np.zeros(n_paths, dtype=bool)
 
         stored_paths = [] if store_paths else None
         call_indices = [] if store_paths else None
@@ -404,8 +403,6 @@ class MCStandardPricer:
         for i, t_i in enumerate(self.obs_dates):
             S_i = S_paths[:, i]
             active = ~called
-
-            knocked_in |= (S_i < ki_barrier)
 
             barrier_i = self.ac.call_barrier_at_period(i) * self.S_ref
             triggered = active & (S_i >= barrier_i)
@@ -420,7 +417,8 @@ class MCStandardPricer:
         survived = ~called
         if survived.any():
             S_T = S_paths[survived, -1]
-            ki_surv = knocked_in[survived]
+            # european_ki: knock-in observed at maturity only (terminal spot)
+            ki_surv = S_T < self.ac.protection_barrier * self.S_ref
             T = self.ac.maturity_years
 
             coupon_mask = S_T >= self.ac.coupon_barrier * self.S_ref
@@ -504,30 +502,4 @@ class MCStandardPricer:
             # Note: antithetic not supported for vol-aware models (variance process
             # is path-dependent; simple sign flip of Z does not give antithetic paths).
             S_paths = self._simulate_paths_vol_aware(self.n_paths)
-            payoffs, stored_paths, call_idxs = self._price_paths(
-                S_paths, store_paths=return_paths
-            )
-            if track_convergence:
-                n = 100
-                while n <= len(payoffs):
-                    sub = payoffs[:n]
-                    se = sub.std(ddof=1) / np.sqrt(n) if n > 1 else 0.0
-                    conv_series.append((n, float(sub.mean()), float(se)))
-                    n = int(n * 1.5)
-                conv_series.append((len(payoffs), float(payoffs.mean()),
-                                    float(payoffs.std(ddof=1) / np.sqrt(len(payoffs)))))
-
-        price_est = float(payoffs.mean())
-        std_err = float(payoffs.std(ddof=1) / np.sqrt(len(payoffs)))
-        z95 = 1.96
-
-        return MCResult(
-            price=price_est,
-            std_err=std_err,
-            ci_low=price_est - z95 * std_err,
-            ci_high=price_est + z95 * std_err,
-            n_paths=len(payoffs),
-            paths=stored_paths,
-            call_times=call_idxs,
-            convergence_series=conv_series,
-        )
+            payoffs, stored_paths, call
