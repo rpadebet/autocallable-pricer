@@ -146,6 +146,45 @@ with ctrl3:
     track_conv = st.toggle("Track Convergence", value=True,
                            help="Compute running price estimate at multiple N (adds ~1s)")
 
+# ── Dupire surface type selector (only shown when Local Vol is selected) ──────
+# WHY HERE: When the user picks "Local Vol (Dupire)" as the vol model, they can
+# now choose between two Dupire surfaces:
+#   1. Cubic-Spline Dupire — derived from bicubic spline interpolation of raw IV
+#      quotes. May appear jagged due to data sparsity + numerical differentiation.
+#   2. SVI Dupire — derived after per-slice SVI parametric fitting, which acts as
+#      a principled denoiser before differentiation, yielding a smoother surface.
+#
+# The SVI option is only available if the SVI surface has been built on the
+# Vol Surface page (Tab 3 → Build SVI Surface). If it has not been built yet,
+# the user sees an informational nudge.
+_dupire_surface_type = "cubic"  # default
+if _vm_selected == "local":
+    _vol_surf_obj = st.session_state.get("vol_surf_obj")
+    _svi_available = _vol_surf_obj is not None and getattr(_vol_surf_obj, "svi_ready", False)
+
+    if _svi_available:
+        _dupire_surface_type = st.radio(
+            "Dupire surface for pricing:",
+            options=["Cubic-Spline (jagged)", "SVI (smooth)"],
+            index=0,
+            horizontal=True,
+            key="dupire_surface_selector",
+            help=(
+                "Cubic-Spline: differentiates the bicubic IV spline directly — "
+                "may be jagged in sparse regions.\n\n"
+                "SVI: differentiates a per-slice SVI-fitted IV surface — "
+                "smoother but requires the SVI build step on the Vol Surface page."
+            ),
+        )
+        _dupire_surface_type = "svi" if "SVI" in _dupire_surface_type else "cubic"
+    else:
+        _dupire_surface_type = "cubic"
+        if _vm_selected == "local":
+            st.caption(
+                "📐 **SVI Dupire not available.** To enable the smooth SVI Dupire option, "
+                "go to **Vol Surface → Dupire Vol Surface tab** and click **Build SVI Surface**."
+            )
+
 st.divider()
 
 
@@ -153,13 +192,20 @@ st.divider()
 # PRICING COMPUTATION
 # ==============================================================================
 
-def _build_vol_surface(params: dict):
+def _build_vol_surface(params: dict, dupire_surface_type: str = "cubic"):
     """
     Build a VolSurface from the current snapshot, or return None on failure.
 
-    Caches the result in session_state keyed by snapshot_key + S0 + r + q so
-    the surface is not rebuilt on every Run click. The Dupire local vol grid
-    is also built once and shared across all three pricers.
+    Caches the result in session_state keyed by snapshot_key + S0 + r + q +
+    dupire_surface_type so changing the surface type invalidates the cache
+    and forces a rebuild of local_vol_interp.
+
+    Args:
+        params: Sidebar params dict.
+        dupire_surface_type: "cubic" (default) or "svi".
+            "cubic" — differentiates the bicubic spline directly.
+            "svi"   — differentiates the SVI-smoothed surface. Requires
+                      vol_surf_obj.svi_ready == True (built on Vol Surface page).
 
     Returns: (VolSurface | None, error_message | None)
     """
@@ -167,7 +213,10 @@ def _build_vol_surface(params: dict):
     from scipy.interpolate import RegularGridInterpolator
 
     snap_key = params.get("snapshot_key", "")
-    cache_key = f"vs_{snap_key}_{params['S0']}_{params['r']}_{params.get('q', 0.014)}"
+    cache_key = (
+        f"vs_{snap_key}_{params['S0']}_{params['r']}"
+        f"_{params.get('q', 0.014)}_{dupire_surface_type}"
+    )
 
     cached = st.session_state.get("vol_surface_cache")
     if cached and cached.get("key") == cache_key:
@@ -175,14 +224,41 @@ def _build_vol_surface(params: dict):
 
     try:
         snap_df = params["snapshot_df"]
-        vs = VolSurface(snap_df, S0=params["S0"], r=params["r"], q=params.get("q", 0.014))
 
-        # Build shared Dupire grid once for all pricers
-        import numpy as np
+        # Reuse a pre-built VolSurface from the Vol Surface page if available
+        # (avoids re-fitting the spline and, for SVI, preserves the SVI fits).
+        existing_vs = st.session_state.get("vol_surf_obj")
+        if (
+            existing_vs is not None
+            and existing_vs.S0 == params["S0"]
+            and existing_vs.r == params["r"]
+        ):
+            vs = existing_vs
+        else:
+            vs = VolSurface(
+                snap_df,
+                S0=params["S0"],
+                r=params["r"],
+                q=params.get("q", 0.014),
+            )
+
+        # Build local vol interpolator using the requested surface type
         m_axis = np.linspace(0.40, 1.80, 40)
         max_t = params["autocallable"].maturity_years + 0.05
         t_axis = np.linspace(0.01, max_t, 25)
-        LV = vs.dupire_local_vol_grid(m_axis, t_axis)
+
+        if dupire_surface_type == "svi" and getattr(vs, "svi_ready", False):
+            # Use the SVI-smoothed Dupire grid
+            LV = vs.svi_dupire_local_vol_grid(m_axis, t_axis)
+        else:
+            # Default: cubic-spline Dupire
+            if dupire_surface_type == "svi":
+                st.caption(
+                    "⚠️ SVI surface not ready — falling back to cubic-spline Dupire. "
+                    "Build the SVI surface on the Vol Surface page first."
+                )
+            LV = vs.dupire_local_vol_grid(m_axis, t_axis)
+
         local_vol_interp = RegularGridInterpolator(
             (t_axis, m_axis), LV,
             method="linear", bounds_error=False, fill_value=None,
@@ -192,13 +268,14 @@ def _build_vol_surface(params: dict):
             "key": cache_key,
             "vs": vs,
             "local_vol_interp": local_vol_interp,
+            "dupire_surface_type": dupire_surface_type,
         }
         return vs, None
     except Exception as e:
         return None, str(e)
 
 
-def run_pricers(params, ac, show_paths, track_conv):
+def run_pricers(params, ac, show_paths, track_conv, dupire_surface_type: str = "cubic"):
     """
     Run all three pricers and return results. Each method is wrapped in try/except
     so a single pricer failure does not block the others.
@@ -210,6 +287,10 @@ def run_pricers(params, ac, show_paths, track_conv):
         "bates"  → MCStandard + Survival use Heston+jumps; FDM falls back to flat
     FDM local vol is the only FDM vol-aware mode. Heston/Bates FDM is not yet implemented
     (PDE for stochastic vol requires an extra state dimension — future work).
+
+    Args:
+        dupire_surface_type: "cubic" or "svi" — which Dupire surface to use when
+            vol_model == "local". Passed through to _build_vol_surface().
     """
     results = {"fd": None, "mc": None, "sv": None,
                "fd_err": None, "mc_err": None, "sv_err": None}
@@ -222,8 +303,9 @@ def run_pricers(params, ac, show_paths, track_conv):
     vol_surface = None
     local_vol_interp = None
     if vol_model == "local":
-        with st.spinner("Building Dupire local vol surface from snapshot…"):
-            vol_surface, vs_err = _build_vol_surface(params)
+        surface_label = "SVI Dupire" if dupire_surface_type == "svi" else "Cubic-Spline Dupire"
+        with st.spinner(f"Building {surface_label} local vol surface from snapshot…"):
+            vol_surface, vs_err = _build_vol_surface(params, dupire_surface_type)
             if vol_surface is None:
                 st.warning(
                     f"⚠️ Could not build local vol surface: {vs_err}. "
@@ -319,7 +401,10 @@ def run_pricers(params, ac, show_paths, track_conv):
 
 # Use session state to cache results between tab switches
 if run_all:
-    st.session_state["pricer_results"] = run_pricers(params, ac, show_paths, track_conv)
+    st.session_state["pricer_results"] = run_pricers(
+        params, ac, show_paths, track_conv,
+        dupire_surface_type=_dupire_surface_type,
+    )
     st.session_state["pricer_params_used"] = {k: v for k, v in params.items()
                                                if k not in ("snapshot_df", "autocallable", "security_params")}
     # Store fingerprint so the "settings changed" banner can detect future changes
@@ -730,132 +815,4 @@ with tab3:
                     "t = %{x:.2f}y<br>"
                     "S = %{y:,.1f}<extra></extra>"
                 ),
-            ))
-
-        fig.update_layout(
-            title=(
-                f"30 Simulated Paths — {called_count} called early, "
-                f"{survived_count} survived to maturity"
-            ),
-            xaxis=dict(title="Time (years)", tickformat=".1f"),
-            yaxis=dict(title="Spot Level S(t)"),
-            legend=dict(orientation="h", yanchor="bottom", y=1.02),
-            height=500,
-            margin=dict(t=80, b=50),
-        )
-        st.plotly_chart(fig, use_container_width=True)
-
-        # Summary stats
-        total_paths = mc_res.n_paths
-        if mc_res.call_times:
-            n_called = sum(1 for c in mc_res.call_times if c is not None)
-            call_pct = n_called / len(mc_res.call_times) * 100
-        else:
-            call_pct = float("nan")
-
-        st.caption(
-            f"Showing 30 of {total_paths:,} paths. "
-            f"In full simulation: ~{call_pct:.1f}% called early (estimated from stored paths)."
-        )
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# TAB 4 — TERM STRUCTURE (Call Probability + Expected Payoff by Date)
-# ──────────────────────────────────────────────────────────────────────────────
-with tab4:
-    st.subheader("Term Structure of Call Probabilities")
-    _cp_vol_model = params.get("vol_model", "flat")
-    _cp_sigma = fd_res.call_probs and params.get("sigma", 0.20)  # fallback
-    _heston_params = params.get("heston_params", {})
-    if _cp_vol_model in ("heston", "bates") and _heston_params:
-        import math as _math
-        _eff_sigma = _math.sqrt(_heston_params.get("v0", params["sigma"] ** 2))
-        _model_label = "Heston" if _cp_vol_model == "heston" else "Bates"
-        st.caption(
-            f"Analytical call probabilities using \u03c3\u209a\u209c\u209a = {_eff_sigma*100:.1f}% "
-            f"(√v\u2080 from {_model_label} calibration). "
-            "Exact model-consistent probabilities would require simulation."
-        )
-    else:
-        st.caption("FD-derived call probability at each observation date (analytical — no MC noise).")
-
-    if not fd_res or not fd_res.call_probs:
-        st.info("FD pricing must succeed to show term structure.")
-    else:
-        obs_dates = fd_res.obs_dates
-        call_probs = fd_res.call_probs
-        cumulative = np.cumsum(call_probs)
-        survival_prob = 1.0 - cumulative
-
-        # Left panel — table
-        col_left, col_right = st.columns([1, 2])
-        with col_left:
-            st.markdown("**Observation Date Analysis**")
-            table_rows = []
-            for i, (t, p) in enumerate(zip(obs_dates, call_probs)):
-                table_rows.append({
-                    "Date (yr)": f"{t:.3f}",
-                    "Call Barrier": f"{ac.call_barrier_at_period(i)*100:.1f}%",
-                    "P(call at t)": f"{p*100:.2f}%",
-                    "P(survive)": f"{(1-cumulative[i])*100:.2f}%",
-                })
-            import pandas as pd
-            df_table = pd.DataFrame(table_rows)
-            st.dataframe(df_table, use_container_width=True, hide_index=True)
-
-        # Right panel — chart
-        with col_right:
-            fig = make_subplots(
-                rows=2, cols=1,
-                subplot_titles=("Call Probability per Observation Date",
-                                "Cumulative Call Probability & Survival"),
-                shared_xaxes=True,
-                vertical_spacing=0.12,
-            )
-
-            # Top: per-period bar chart
-            fig.add_trace(go.Bar(
-                x=[f"{t:.2f}y" for t in obs_dates],
-                y=[p * 100 for p in call_probs],
-                name="P(call at t)",
-                marker_color="#2196F3",
-                text=[f"{p*100:.1f}%" for p in call_probs],
-                textposition="outside",
-            ), row=1, col=1)
-
-            # Bottom: cumulative call + survival
-            fig.add_trace(go.Scatter(
-                x=[f"{t:.2f}y" for t in obs_dates],
-                y=[c * 100 for c in cumulative],
-                mode="lines+markers",
-                name="Cumulative P(call)",
-                line=dict(color="#FF5722", width=2),
-            ), row=2, col=1)
-            fig.add_trace(go.Scatter(
-                x=[f"{t:.2f}y" for t in obs_dates],
-                y=[(1 - c) * 100 for c in cumulative],
-                mode="lines+markers",
-                name="P(survive to maturity)",
-                line=dict(color="#4CAF50", width=2, dash="dash"),
-            ), row=2, col=1)
-
-            fig.update_yaxes(title_text="Probability (%)", row=1, col=1)
-            fig.update_yaxes(title_text="Probability (%)", range=[0, 105], row=2, col=1)
-            fig.update_layout(
-                height=480,
-                showlegend=True,
-                legend=dict(orientation="h", yanchor="bottom", y=1.05),
-                margin=dict(t=60, b=40),
-            )
-            st.plotly_chart(fig, use_container_width=True)
-
-        # Expected remaining life
-        if call_probs:
-            expected_life = sum(t * p for t, p in zip(obs_dates, call_probs))
-            expected_life += obs_dates[-1] * float(1 - cumulative[-1])  # maturity if never called
-            st.metric(
-                "Expected Life (duration-weighted)",
-                f"{expected_life:.3f} years",
-                help="Σ t_i × P(called at t_i) + T × P(survives to maturity). "
-                     "Compare to nominal maturity of " + f"{ac.maturity_years}Y.",
-            )
+          

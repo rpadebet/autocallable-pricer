@@ -408,3 +408,120 @@ def test_fdm_local_vol_reasonable(phoenix_ac, vol_surface_fixture):
         f"Local vol FD (${res_lv.price:.2f}) and flat vol FD (${res_flat.price:.2f}) "
         f"differ by ${diff:.2f} — unexpectedly large discrepancy"
     )
+
+
+# ===========================================================================
+# GAP-2: Bates model (Heston + Merton jumps)
+# ===========================================================================
+
+def test_bates_price_finite_positive(phoenix_ac):
+    """
+    Survival MC with vol_model='bates' must return a finite, positive price.
+
+    WHY: Bates model adds a Merton jump process on top of Heston stochastic vol.
+    If the jump parameters are mishandled (e.g., division by zero in jump
+    intensity, NaN from log of negative number), price becomes NaN or inf.
+    This test verifies the full Bates path generates a valid price.
+    """
+    bates_pricer = MCSurvivalPricer(
+        phoenix_ac,
+        sigma=SIGMA, r=R, q=Q,
+        n_paths=1000, seed=42,
+        vol_model="bates",
+        heston_params={"v0": 0.04, "kappa": 2.0, "theta": 0.04, "gamma": 0.3, "rho": -0.7},
+        jump_params={"lam": 0.5, "mu_J": -0.15, "sig_J": 0.25},
+    )
+    res = bates_pricer.price()
+    assert np.isfinite(res.price), f"Bates price not finite: {res.price}"
+    assert res.price > 0, f"Bates price non-positive: {res.price}"
+
+
+def test_bates_price_differs_from_heston(phoenix_ac):
+    """
+    Bates (Heston + jumps with lam=1.0) price must differ from Heston-only.
+
+    WHY: Jumps add negative skew and excess kurtosis. At lam=1.0 (one jump per
+    year on average) with mu_J=-0.15, the jump compensation materially affects
+    the drift and vol smile, so the autocallable price should be meaningfully
+    different from the no-jump Heston price. A $0.50 minimum difference avoids
+    false negatives from rounding noise but also catches a degenerate no-op jump.
+    """
+    heston_only = MCSurvivalPricer(
+        phoenix_ac,
+        sigma=SIGMA, r=R, q=Q,
+        n_paths=3000, seed=7,
+        vol_model="heston",
+        heston_params={"v0": 0.04, "kappa": 2.0, "theta": 0.04, "gamma": 0.3, "rho": -0.7},
+    )
+    bates_with_jumps = MCSurvivalPricer(
+        phoenix_ac,
+        sigma=SIGMA, r=R, q=Q,
+        n_paths=3000, seed=7,
+        vol_model="bates",
+        heston_params={"v0": 0.04, "kappa": 2.0, "theta": 0.04, "gamma": 0.3, "rho": -0.7},
+        jump_params={"lam": 1.0, "mu_J": -0.15, "sig_J": 0.25},
+    )
+
+    res_h = heston_only.price()
+    res_b = bates_with_jumps.price()
+
+    assert np.isfinite(res_b.price), f"Bates price not finite: {res_b.price}"
+    assert abs(res_b.price - res_h.price) > 0.50, (
+        f"Bates (lam=1.0) and Heston-only prices too close: "
+        f"Bates={res_b.price:.4f}, Heston={res_h.price:.4f}. "
+        f"Jumps may be having no effect."
+    )
+
+
+def test_bates_zero_lambda_equals_heston(phoenix_ac):
+    """
+    Bates with lam=0 must produce the same price as pure Heston (within MC noise).
+
+    WHY: No jumps (lam=0) means the Bates model degenerates to Heston. This
+    tests that the jump correction is correctly zeroed out at lam=0 and that
+    the two code paths agree to within typical MC standard error.
+    Tolerance 2*SE_heston ≈ $2–4 for n_paths=2000.
+    """
+    shared_params = dict(
+        sigma=SIGMA, r=R, q=Q, n_paths=2000, seed=99,
+        heston_params={"v0": 0.04, "kappa": 2.0, "theta": 0.04, "gamma": 0.3, "rho": -0.7},
+    )
+    heston_only = MCSurvivalPricer(phoenix_ac, vol_model="heston", **shared_params)
+    bates_zero  = MCSurvivalPricer(phoenix_ac, vol_model="bates",
+                                   jump_params={"lam": 0.0, "mu_J": -0.05, "sig_J": 0.10},
+                                   **shared_params)
+
+    res_h = heston_only.price()
+    res_b = bates_zero.price()
+
+    tol = max(5.0, 4 * res_h.std_err)   # generous: 4 SE or $5, whichever is larger
+    assert abs(res_b.price - res_h.price) < tol, (
+        f"Bates (lam=0) should equal Heston: Bates={res_b.price:.4f}, "
+        f"Heston={res_h.price:.4f}, diff={abs(res_b.price-res_h.price):.4f}, "
+        f"tol={tol:.4f}"
+    )
+
+
+# ===========================================================================
+# GAP-6: Merton series convergence — n_terms=20 ≈ n_terms=10
+# ===========================================================================
+
+def test_merton_series_n_terms_convergence():
+    """
+    _merton_call_bs_series with n_terms=20 must match n_terms=10 to within $0.01.
+
+    WHY: The Merton series converges exponentially fast. For realistic lam*T < 10
+    (here lam=2, T=1 → lam*T=2), the first 10 Poisson terms capture >99.99% of
+    the probability mass. This test confirms the truncation error is negligible,
+    validating the default n_terms=10 choice made in the codebase.
+    """
+    from app.heston import _merton_call_bs_series
+
+    S0    = 100.0
+    K_arr = np.array([90.0, 95.0, 100.0, 105.0, 110.0])
+    T_arr = np.ones(5)       # 1Y to maturity
+    r, q  = 0.045, 0.01
+    sigma = 0.18
+    lam, mu_J, sig_J = 2.0, -0.08, 0.15   # moderate jump intensity
+
+    p

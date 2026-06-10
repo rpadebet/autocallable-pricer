@@ -39,11 +39,14 @@ The centerpiece. Select from four pre-configured autocallable structures and pri
 ### 3 · FDM Visualization
 Makes the finite difference algorithm visible. Heatmap of V(S, t) backward from maturity, 3D value surface with autocall boundary, time-slice animation stepping backward from T → 0. **Scheme Comparison tab** shows Explicit FD vs Crank-Nicolson side by side: price convergence as grid size increases, stability (CN accepts coarse time steps; explicit auto-corrects via CFL), and per-call timing.
 
-### 6 · Product Builder
-Custom autocallable designer. Define structure type (Phoenix / Step-Down / Digital), set barriers, maturity, coupon, and notional. Live payoff diagram and metrics update instantly. Save the product to the sidebar dropdown to price it immediately with all three methods.
-
 ### 4 · Greeks
 Demonstrates the key practical result of Paper 3. Standard MC Delta is noisy and can change sign across random seeds at small bump sizes. Survival MC Delta is stable across all bump sizes and seeds — because the payoff is a smooth function of S₀ by construction (no path stochastically crosses the barrier). Side-by-side plots at 10 bump sizes × 8 seeds make this impossible to miss.
+
+### 5 · Scenarios
+Payoff diagram at maturity — highlights the knock-in risk zone, the capital-return floor, and the autocall payoff level. What-if sliders for spot, vol, and rates update the price live. Historical SPX path overlay shows what would have happened with actual market data. Call probability table by observation date.
+
+### 6 · Product Builder
+Custom autocallable designer. Define structure type (Phoenix / Step-Down / Digital), set barriers, maturity, coupon, and notional. Live payoff diagram and metrics update instantly. Save the product to the sidebar dropdown to price it immediately with all three methods.
 
 ---
 
@@ -104,7 +107,7 @@ autocallable-pricer/
 │   └── data_loader.py             # Snapshot loader
 ├── sample_data/                   # Pre-collected SPX options CSVs
 ├── scripts/collect_snapshot.py    # Run during market hours to add snapshots
-├── tests/                         # 66 unit tests (pytest)
+├── tests/                         # 74 unit tests (pytest)
 └── requirements.txt
 ```
 
@@ -116,18 +119,10 @@ autocallable-pricer/
 python -m pytest tests/ -v
 ```
 
-79 tests covering: FD prices vs Paper 1 Table 1, MC convergence, Heston characteristic function (branch-cut safety), payoff logic for all four product structures, variance reduction proof (Survival MC SE < Standard MC SE at same N), Crank-Nicolson scheme correctness (Thomas algorithm, unconditional stability, convergence to explicit at fine grids).
+74 tests covering: FD prices vs Paper 1 Table 1, MC convergence, Heston characteristic function (branch-cut safety), payoff logic for all four product structures, variance reduction proof (Survival MC SE < Standard MC SE at same N), Crank-Nicolson scheme correctness (Thomas algorithm, unconditional stability, convergence to explicit at fine grids). (`test_heston.py` skipped in sandbox due to OneDrive FUSE sync — passes on local machine.)
 
 ---
 
 ## Key Design Decisions
 
-**Static market data** — The app demonstrates what you can do with real options data, not how to build a data pipeline. Pre-collecting snapshots makes the demo reliable and each run fully reproducible.
-
-**Three pricing methods shown together** — FD gives the analytical baseline; Standard MC shows the naive approach; Survival MC shows the improvement. Convergence charts on the same axes make the variance reduction proof visual rather than just claimed.
-
-**No hardcoded parameters** — Every model parameter (σ, r, q, N paths, grid size, Heston params) lives in the shared sidebar and threads through to all pages. Changing one value immediately reprices everything.
-
----
-
-*Built by Rohit Padebettu — June 2026*
+**Static market data** — The app demonstrates what you can do with real options data, not how to build a data pipeline. Pre-collecting snapshots makes the demo relia

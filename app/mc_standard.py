@@ -515,19 +515,4 @@ class MCStandardPricer:
                     conv_series.append((n, float(sub.mean()), float(se)))
                     n = int(n * 1.5)
                 conv_series.append((len(payoffs), float(payoffs.mean()),
-                                    float(payoffs.std(ddof=1) / np.sqrt(len(payoffs)))))
-
-        price_est = float(payoffs.mean())
-        std_err = float(payoffs.std(ddof=1) / np.sqrt(len(payoffs)))
-        z95 = 1.96
-
-        return MCResult(
-            price=price_est,
-            std_err=std_err,
-            ci_low=price_est - z95 * std_err,
-            ci_high=price_est + z95 * std_err,
-            n_paths=len(payoffs),
-            paths=stored_paths,
-            call_times=call_idxs,
-            convergence_series=conv_series,
-        )
+                          

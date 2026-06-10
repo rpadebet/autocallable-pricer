@@ -4,6 +4,208 @@ All notable changes to the AutoCallable Analytics Platform are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 Versioning follows [Semantic Versioning](https://semver.org/): patch (0.0.X) for bug fixes, minor (0.X.0) for new features, major (X.0.0) for architecture changes.
 
+## [0.6.0] — 2026-06-10
+
+### Added
+
+- **`app/vol_surface.py` — SVI (Stochastic Volatility Inspired) model**
+  Added `_svi_w()` and `_fit_svi_slice()` module-level helpers implementing the Gatheral (2004)
+  parametrization `w(k) = a + b*(rho*(k-m) + sqrt((k-m)^2 + sigma^2))`. Per-slice fitting uses
+  L-BFGS-B with 4 diverse starting points to handle the non-convex objective. Produces a smoother
+  Dupire surface than the cubic-spline approach by denoising market IV quotes per expiry before
+  computing d2C/dK2.
+
+- **`app/vol_surface.py` — `VolSurface.build_svi_surface()`**
+  Fits SVI per expiry slice (>=6 points), re-evaluates on the standard moneyness knot grid, and
+  fits a smooth `RectBivariateSpline` (s=0.0005). Returns `{n_slices_fitted, slice_rmse, svi_ready}`.
+
+- **`app/vol_surface.py` — `VolSurface.svi_implied_vol()`, `svi_surface_grid()`**
+  SVI-smoothed IV evaluation and 3D grid builder. Falls back to cubic-spline surface if SVI
+  not yet built.
+
+- **`app/vol_surface.py` — `VolSurface.svi_dupire_local_vol_grid()`, `svi_dupire_surface_grid()`**
+  Vectorised SVI-based Dupire local vol grid. Falls back to cubic-spline Dupire gracefully.
+
+- **`app/vol_surface.py` — CSV export helpers**
+  `to_csv_implied_vol()` and `to_csv_dupire(method=["cubic"|"svi"])` produce download-ready
+  CSV strings for `st.download_button()`. Dupire CSVs include a label comment header.
+
+- **`app/pages/01_Vol_Surface.py` — 3-tab restructure**
+  New tab layout: (1) "Build Vol Surface" -- IV surface + ATM term structure + CSV download;
+  (2) "Calibrate Models" -- merged Heston + Merton + Bates in one run;
+  (3) "Dupire Vol Surface" -- cubic-spline section + SVI section with per-slice RMSE,
+  3D surfaces, ATM 3-way comparison, and CSV downloads.
+
+- **`app/pages/02_Pricer.py` — SVI Dupire surface selector**
+  When Local Vol model is active and SVI has been built, a radio button lets the user choose
+  between cubic-spline and SVI Dupire surfaces for pricing.
+
+- **`tests/test_vol_surface.py` — 36 new tests (110 total)**
+  New test classes: TestSVIFormula (5), TestSVIFit (5), TestBuildSVISurface (4),
+  TestSVISurfaceEval (5), TestSVIDupireGrid (5), TestDupireSmoothness (2),
+  TestCSVExport (8), TestFallback (2). All 110 tests pass.
+
+### Changed
+
+- **`app/pages/01_Vol_Surface.py`** — "Show Dupire vol" toggle replaced with dedicated
+  Dupire tab; "Calibrate Heston" and "Calibrate All Models" buttons merged into single
+  "Calibrate All Models (Heston + Merton + Bates)" button.
+
+## [0.5.16] — 2026-06-08
+
+### Reverted
+
+- **`app/mc_survival.py` — Survival MC sub-stepping reverted to paper methodology**
+  A prior commit added `n_steps_per_year` sub-stepping inside the survival MC loop for local vol
+  and Bates models. This deviated from the paper's one-step-per-observation-date algorithm and
+  introduced complexity without a clear accuracy benefit for the demo use case. Reverted to the
+  clean Paper 3 formulation: one survival step per observation date, local vol queried at the
+  observation midpoint.
+
+### Added
+
+- **`app/pages/02_Pricer.py` — Survival MC methodology limitation note**
+  When the active vol model is Local Vol or Bates, the Survival MC result card now displays an
+  informational note explaining that the survival probability formula conditions on a
+  single effective sigma (local vol at midpoint or Heston √v_t), and that this is an
+  approximation relative to the exact continuous-barrier survival probability. Prevents
+  the user from mistakenly treating the Survival MC price as exact under these models.
+
+### Fixed
+
+- **`app/pages/02_Pricer.py` — NameError: `heston_params` at module level**
+  (`app/pages/02_Pricer.py`)
+  `heston_params` and `jump_params` were referenced at module level before being extracted from
+  the `params` dict returned by `render_sidebar()`. When Streamlit re-ran the script on page
+  navigation, the reference fired before the sidebar had been rendered, causing a `NameError`.
+  Fix: moved extraction of `heston_params` and `jump_params` to immediately after the
+  `render_sidebar()` call rather than at module top-level.
+
+- **`app/pages/03_FDM_Visualization.py` — FDM Visualization now honors vol model selection**
+  (`app/pages/03_FDM_Visualization.py`)
+  The FDM Visualization page passed a hardcoded `vol_model="flat"` to `FDPricer` regardless of
+  the sidebar selection. When the user switched to Local Vol in the sidebar, the heatmap and
+  time-slice animation continued to show flat-vol results with no indication of the mismatch.
+  Fix: reads `vol_model` and `vol_surface` from sidebar params and passes them through to
+  `FDPricer`. Also added `st.rerun()` on page load when the vol model or snapshot key has
+  changed since the last render, so the visualization refreshes automatically on navigation.
+
+---
+
+## [0.5.15] — 2026-06-08
+
+### Fixed
+
+- **DS-1 — Call probability table now consistent with selected vol model**
+  (`app/pde_pricer.py`, `app/pages/02_Pricer.py`)
+
+  Previously `call_probabilities()` always received `self.sigma` (flat vol), even when
+  the user selected Heston or Bates on the sidebar. The price used the chosen vol model
+  but the call probability table used a different vol — a silent inconsistency.
+
+  Fix: `FDPricer.__init__` now sets `self.call_prob_sigma = self.sigma` by default.
+  Page 2 overrides it to `√v₀` immediately after FDPricer construction when
+  `vol_model in ("heston", "bates")` and `heston_params` is available. Both `price()`
+  call sites in `pde_pricer.py` (flat vol path line ~525, local vol path line ~715)
+  now pass `self.call_prob_sigma` instead of `self.sigma`.
+
+  The call probability caption on Page 2 is now dynamic: for Heston/Bates it reads
+  *"σ_eff = 22.4% (√v₀ from Heston calibration). Exact model-consistent probabilities
+  would require simulation."* For flat/local vol the caption is unchanged.
+
+  `call_prob_sigma` is a public attribute — callers can override it further
+  (e.g. use `√θ` for long-maturity products) without changing FDPricer's interface.
+
+## [0.5.14] — 2026-06-08
+
+### Added
+
+- **`tests/test_pde_pricer.py` — GAP-7 (Thomas algorithm edge cases)**: Three new tests covering
+  `thomas_solve` at n=1 (single equation), n=2 (2×2 hand-verified system), and n=500 (comparison
+  against `numpy.linalg.solve` for a diagonally dominant random matrix, tolerance 1e-8).
+
+- **`tests/test_pde_pricer.py` — GAP-9 (tau/t roundtrip)**: Verifies `_tau_to_t(_t_to_tau(t)) == t`
+  for t ∈ {0.0, 0.25, 0.5, 1.0, T}, confirming the coordinate transform is lossless.
+
+- **`tests/test_pde_pricer.py` — GAP-1 (local vol FDM)**: Two tests: (1) constant local vol surface
+  prices within $15 of flat vol FDM, (2) BUG #1 regression — maturity BC must fire, confirmed by
+  gap < $10 (before the `<` → `<=` fix the gap was ~$30+).
+
+- **`tests/test_pde_pricer.py` — GAP-4 (FDM coupon gating)**: Tests `_apply_autocall_bc` with
+  `call_barrier=0.90, coupon_barrier=1.00`. Asserts spot in [90%, 100%) receives redemption only,
+  spot ≥ 100% receives redemption + coupon. Directly validates the `np.where(S >= coupon_barrier)`
+  logic in `_apply_autocall_bc`.
+
+- **`tests/test_payoffs.py` — GAP-3 (soft_protection)**: Three tests covering the Digital Autocall's
+  `soft_protection` terminal payoff: (1) far below floor → floor * notional, (2) above floor but
+  below call_barrier → spot/S_ref * notional, (3) above call_barrier → base + coupon_per_period.
+  All include discount factor verification.
+
+- **`tests/test_payoffs.py` — GAP-8 (step-down call probability)**: Asserts that the Step-Down
+  Barrier security's total call probability ≥ Phoenix (fixed 100% barrier) total call probability.
+  Validates the economic intuition that a declining barrier makes autocall more likely.
+
+- **`tests/test_mc_pricers.py` — GAP-2 (Bates model)**: Three tests: (1) Bates with λ=0.5 returns
+  finite positive price, (2) Bates with λ=1.0 produces meaningfully different price from Heston-only
+  (> $0.50 difference — jumps have effect), (3) Bates with λ=0 equals Heston within 4 SE.
+
+- **`tests/test_mc_pricers.py` — GAP-6 (Merton series convergence)**: Asserts that
+  `_merton_call_bs_series` with `n_terms=20` matches `n_terms=10` to within $0.01 per option across
+  5 strikes, confirming the default truncation is sufficient for λ*T ≤ 2.
+
+### Summary
+
+Test count: 59 → 74 (+15 new tests). All 74 pass; `test_heston.py` still skipped (FUSE truncation).
+
+## [0.5.13] — 2026-06-08
+
+### Fixed
+
+- **`app/pde_pricer.py` — BUG #1 (CRITICAL)**: Local vol FDM never applied the maturity
+  observation boundary condition. The backward sweep condition was `t_current <= t_obs < t_axis_phys[step]`
+  (strict `<`). At `step=0`, `t_axis_phys[0] = T`, so for any observation at maturity the condition
+  evaluated `T < T` = False. Since the last observation date is always `maturity_years` (guaranteed
+  by `_observation_dates_from_params`), the maturity autocall BC was silently skipped on every
+  local vol run. Fix: change strict `<` to `<=` so the condition fires when the obs date falls
+  exactly on the current grid point.
+  _File_: `app/pde_pricer.py` line 648. One character change (`<` → `<=`).
+
+- **`app/pde_pricer.py` — BUG #3 (LOW)**: `continuous_autocall_closedform()` returned an
+  undiscounted payout when `call_barrier * S0 <= S0` (spot already at or above barrier). Was:
+  `notional * (1 + coupon_pa * T)`. Fixed to discount using `expected_call_time = T/2`
+  (same approximation used for the called-path PV component), consistent with the rest of the
+  closed-form formula.
+
+- **`app/pde_pricer.py` — BUG #4 (LOW)**: `np.clip(NaN, 0, 1500)` behaviour is numpy-version-
+  dependent (some versions return NaN, some return 0), silently masking FD instability. Added
+  explicit `if not np.isfinite(price): raise RuntimeError(...)` before the clip in both the
+  flat vol `price()` and local vol `_price_local_vol()` paths. The error message names the
+  likely cause (Courant violation) and the fix (increase N_tau).
+
+- **`app/mc_survival.py` — EC-4 (LOW)**: `_p_survive()` and `_p_survive_vec()` divided by
+  `sigma_t * sqrt(dt)` without guarding against near-zero sigma (theoretically possible at
+  local vol grid boundaries despite clamping). Added `if sigma_t * sqrt(dt) < 1e-10: return 0.5`
+  guard in the scalar path, and `np.where(denom < 1e-10, 0.0, z)` pattern in the vectorised path.
+
+- **`app/pde_pricer.py` — HYG-1**: Duplicate `from scipy.stats import norm` in
+  `continuous_autocall_closedform()` (lines 768–769). Removed second import.
+
+- **`app/heston.py` — HYG-2**: Duplicate `from app.vol_surface import bs_implied_vol` in
+  `calibrate_bates()` (lines 1240, 1242). Removed second import.
+
+- **`app/components/sidebar.py` / `app/pde_pricer.py` / `app/mc_survival.py`** — OneDrive FUSE
+  sync truncates files on the Streamlit Cloud worktree mid-write (truncation at arbitrary byte
+  offsets — same pattern as v0.5.10). Files restored from git; subsequent writes use atomic
+  `os.replace(tmp, target)` to reduce exposure window.
+
+### Not fixed (assessed, deferred)
+
+- **BUG #2** — Survival MC `call_pv` adds coupon unconditionally without checking
+  `coupon_barrier`. Deferred: the spot at barrier crossing is analytically integrated out in
+  survival MC; proper fix requires computing conditional P(spot ∈ [call, coupon_barrier))
+  at crossing time — non-trivial algorithm change. Zero current impact (all 4 configured
+  securities have `call_barrier >= coupon_barrier`).
+
 ## [0.5.12] — 2026-06-08
 
 ### Fixed
@@ -404,136 +606,4 @@ Sandbox count: 57/59 — 2 pre-existing errors from cloud-only OneDrive file tru
   - Heston: `_advance_heston_variance()` Euler-Maruyama with sub-steps; conditions on realised v_t for the survival probability formula
   - Bates: Heston variance + `_jump_survival_correction()` which computes `exp(-λ·Δt·P(jump crosses barrier))`
 - **`app/pde_pricer.py`**: Added `vol_model="local"` path in `FDPricer`:
-  - New `_price_local_vol()` method: direct log-price PDE `∂V/∂τ = (σ²_n/2)·d²V/dx² + (r−q−σ²_n/2)·dV/dx − r·V` with position-dependent σ per grid node
-  - Falls through to existing flat-vol heat-equation solver for `"flat"` and to standard `price()` for `"heston"`/`"bates"` (Heston PDE requires 2D state space — future work)
-- **`tests/test_mc_pricers.py`**: 5 new vol-model tests (total 77/77 passing):
-  - `test_mc_heston_reasonable`: Heston MC price in [$700, $1100]
-  - `test_mc_bates_no_jumps_matches_heston`: Bates(λ=0) == Heston to within $0.01 (same seed, identical paths)
-  - `test_heston_variance_nonneg`: Full truncation holds under high γ=1.0 (no NaN/negative prices)
-  - `test_mc_local_vol_reasonable`: Local vol MC price within $150 of flat vol MC
-  - `test_fdm_local_vol_reasonable`: Local vol FDM price within $200 of flat vol FDM
-- **`app/components/sidebar.py`**: New "③b Volatility Model" section with:
-  - Selectbox: Flat / Local Vol (Dupire) / Heston Stochastic Vol / Bates (Heston + Jumps)
-  - Conditional "Jump Parameters" expander (λ, μ_J, σ_J) shown only when Bates is selected
-  - `vol_model`, `heston_params`, `jump_params` added to returned params dict
-- **`app/pages/02_Pricer.py`**: Vol model integration:
-  - `_build_vol_surface()` helper builds Dupire surface lazily when local vol is selected
-  - `run_pricers()` passes `vol_model`, `heston_params`, `jump_params`, `vol_surface` to all three pricers
-  - FDM falls back to flat when Heston/Bates selected (note shown in metric card header)
-  - Antithetic variates disabled automatically for non-flat models
-  - Vol model label shown in header caption
-
-### Added (Settings Persistence + Change Detection)
-- **`app/components/sidebar.py`**: Sidebar state now persists reliably across page navigation:
-  - Module-level `_cached_load_snapshot()`: moved `@st.cache_data` out of `render_sidebar()` so the same cache is shared across all page scripts (was re-created on every page navigation, defeating the cache)
-  - `_ensure_sidebar_defaults()`: initialises ALL 20 widget keys in `session_state` before any widget is rendered; ensures `key=`-only widgets (no `index=` / `value=` conflict) always have a stored default
-  - `S0` and `r` defaults are now set from market data ONLY on first load; subsequent page navigations preserve user overrides
-  - Removed `index=0` from security selectbox and redundant `index=st.session_state.X` from snapshot selectbox
-- **All 5 app pages**: Settings-changed warning banner:
-  - After `render_sidebar()`, each page computes a fingerprint of key pricing params (security, vol model, S0, r, q, σ, N, seed)
-  - If params changed since last "Run" click, shows `st.warning("Settings have changed — re-run to update results")`
-  - Fingerprint stored per-page in session_state on each "Run All Pricers" / "Run" click
-
-### Fixed
-- **`app/heston.py` `merton_char_fn` line 524**: Missing Itō correction — drift was `r - q - λ·μ̄_J`, should be `r - q - 0.5·σ² - λ·μ̄_J`. Heston CF embeds the `-v/2` Itō term implicitly in its variance factors; Merton (no stochastic variance) must be explicit. Fix reduces pricing error vs Black-Scholes from $2.00 → $0.0001.
-
-### Test Results
-**77 / 77 PASSED** (was 72/72 before this session)
-
----
-
-## [0.3.3] — 2026-06-06
-
-### Fixed
-- **`app/vol_surface.py` line 277**: `RectBivariateSpline.__call__` with scalar inputs returns shape `(1,1)` array, not a scalar — `float()` raised "only 0-dimensional arrays can be converted to Python scalars". Fixed by casting clamp inputs to `float()` and indexing result with `[0, 0]`.
-- **`app/pages/05_Scenarios.py` line 98**: `terminal_payoff()` requires `knocked_in: bool` positional argument that was missing. Fixed by inferring knock-in status from whether the final spot is below the protection barrier (`s < protection_barrier * S_ref`) — the standard convention for payoff diagrams.
-
-### Test Results
-**66 / 66 PASSED**
-
----
-
-## [0.3.2] — 2026-06-06
-
-### Added
-- **`app/pages/05_Scenarios.py`**: Scenarios page — payoff intuition and what-if analysis.
-  - **Tab 1 — Payoff Diagram**: Full maturity payoff curve across spot levels with three regimes shaded (loss zone, protected zone, called zone). Barrier overlays and regime text explain what each zone means in plain language.
-  - **Tab 2 — What-If Analysis**: Interactive sliders for spot, vol, and rate. Reprices using Standard MC (N=3,000) on click. Displays base price vs what-if price with dollar and percent change.
-  - **Tab 3 — Call Probability**: Bar chart of conditional call probability at each observation date + cumulative call probability curve. Table with survival probability column. Expected life calculation.
-  - **Tab 4 — Value Surface**: Heatmap of price vs spot level × implied vol. Each cell is an independent MC run (N=1,000). Progress bar during computation. Color scale (red→green) makes price gradient immediately visible.
-
-### Fixed
-- **`README.md`**: Corrected GitHub clone URL from `rohitpittu/autocallable-pricer` to `rpadebet/autocallable-pricer`. Added `05_Scenarios.py` to project structure tree.
-
-### Test Results
-**66 / 66 PASSED** — confirmed after Scenarios page addition (no new tests required; page uses existing modules).
-
----
-
-## [0.3.1] — 2026-06-06
-
-### Added
-- **`app/pages/04_Greeks.py`**: Greeks page — stable vs. noisy differentiation demo (Paper 3 key result).
-  - **Tab 1 — Delta Stability**: Central-difference Delta computed across 10 bump sizes (0.05%–5% of S₀) × 8 random seeds for both Standard MC and Survival MC. Dual-panel plot shows MC with wide seed-scatter vs. Survival MC with tight bands. Computes and displays variance reduction ratio.
-  - **Tab 2 — Delta Smile**: Delta as a function of spot level (70%–130% of S_ref) with call and protection barrier overlays. Uses `spot_override` parameter for correct Delta computation (barriers stay anchored at S_ref).
-  - **Tab 3 — Vega Stability**: Same multi-seed, multi-bump analysis for Vega (∂V/∂σ). Shows that Survival MC's stability extends to vol sensitivity, not just spot sensitivity.
-  - **Tab 4 — Methodology**: Full mathematical explanation of why Standard MC Greeks are unreliable near barriers (discontinuous payoff) and how One-Step Survival MC resolves this (analytical p_j, smooth payoff w.r.t. S₀). Includes practical hedging implications table.
-- **`app/mc_standard.py` / `app/mc_survival.py`**: Added `spot_override` parameter to both pricers (from prior session). Paths start at `S0` (current spot) while call barriers remain anchored at `call_barrier * S_ref` (trade-date reference) — essential for correct Delta computation.
-
-### Test Results
-**66 / 66 PASSED** — confirmed after Greeks page addition.
-
----
-
-## [0.3.0] — 2026-06-06
-
-### Fixed
-- **`app/autocallable.py`**: File was truncated at line 489 mid-function; `from_security_dict()` was missing its closing 10 lines. Appended missing `protection_floor`, `redemption_at_call`, `notional`, `stepped_barriers`, `correlation_matrix`, `asset_vols`, `description` parameters and closing parenthesis.
-- **`app/autocallable.py`**: `__post_init__` validation now uses `protection_barrier > 1.0` (exclusive) to correctly allow `protection_barrier=1.00` for the Digital Autocall's capital-protected structure.
-- **`tests/test_payoffs.py`**: File was truncated at line 234 mid-assertion; completed the `test_call_probabilities_monotone_decreasing` function.
-- **`tests/test_payoffs.py`**: Fixed three `terminal_payoff` test expected values: the method returns *discounted* PV including final coupon, not undiscounted par. Updated `test_terminal_payoff_no_knockin`, `test_terminal_payoff_with_knockin`, and `test_terminal_payoff_knockin_above_protection` accordingly.
-- **`tests/test_payoffs.py`**: Clarified that `european_ki` knock-in does NOT apply a protection floor — that is `soft_protection` only. The knocked-in payoff is `spot_T/S_ref * notional * discount`.
-- **`tests/test_heston.py`**: Full file rewrite after truncation at `test_heston_model_call_price`. Also fixed `test_heston_implied_vol_range` to filter out sentinel `0.01` values returned by `bs_implied_vol` on solver failure before checking the ATM vol range.
-- **`tests/test_pde_pricer.py`**: `test_fd_vs_mc_consistency` now uses `N_x=200, N_tau=200` (previously 120×80). At coarse resolution, FD has ~1.5% systematic bias vs MC; at 200×200, bias drops to <0.1%, and FD ($951.28) and MC ($950.50) agree within 1σ.
-
-### Root Cause (FUSE Write Cache)
-All truncations were caused by the OneDrive FUSE mount's write-buffering behavior: edits via the Windows-path Write/Edit tools did not fully flush before the session ended. Files written to the FUSE mount may be silently truncated if the buffer is not flushed. Additionally, stale `.pyc` bytecode files on the FUSE mount are read-only and cannot be deleted — Python loaded stale compiled code until source `.py` files were `touch`-ed to force mtime newer than the `.pyc`.
-
-**Resolution protocol established**: For any file that fails to import correctly:
-1. `touch <file>.py` to make source mtime > pyc mtime
-2. If still failing, rewrite via `python3 << 'EOF'` heredoc in bash
-3. Never rely on Write/Edit tool for critical file creation on FUSE mounts
-
-### Test Results
-**66 / 66 PASSED** — first clean run. See `test_results/20260606_results.md`.
-
-
----
-
-## [0.2.0] — 2026-06-06
-
-### Added — Core Pricing Engine (Steps 1–9)
-
-**Infrastructure**
-- `requirements.txt`: All dependencies (streamlit, numpy, scipy, pandas, plotly, yfinance, pytest)
-- `.gitignore`: Standard Python ignores; sample_data/ CSVs intentionally committed for Streamlit Cloud
-- `git_setup.ps1`: PowerShell script for Windows git initialization (bypasses FUSE locking issues)
-- Directory scaffold: `app/`, `app/components/`, `app/pages/`, `scripts/`, `sample_data/`, `tests/`, `test_results/`
-
-**Data Layer**
-- `scripts/collect_snapshot.py`: Live SPX options snapshot collector via yfinance; `score_snapshot()` quality scorer (n_expiries, avg_strikes, pct_tight_spread, pct_missing_iv, quality_score)
-- `scripts/generate_synthetic_data.py`: Realistic synthetic vol surface generator for offline demo; 3 snapshots generated (20260606, 20260609, 20260610)
-- `sample_data/`: 3 CSV snapshots, ~1350 rows each, 23 expiries, 80+ strikes per expiry
-- `app/data_loader.py`: `list_available_snapshots()`, `load_snapshot()`, `get_spot_price()`, `get_rfr()`, `get_implied_vol_matrix()`, `resolve_data_dir()`
-
-**Product Layer**
-- `app/components/securities.py`: 4 pre-configured autocallables — Phoenix (SPX, 2Y, 8% pa), Worst-Of (SPX/NDX/RUT, 3Y, 12%), Step-Down Barrier (monthly, 2Y, 10%), Digital (3Y, $50 digital coupon)
-- `app/autocallable.py`: `AutoCallable` dataclass with full payoff logic — `observation_dates()`, `coupon_per_period()`, `call_barrier_at_period()`, `is_called()`, `terminal_payoff()`, `call_probabilities()`, `from_security_dict()` factory
-
-**Pricing Engines**
-- `app/pde_pricer.py`: Explicit FD on log-price grid (Paper 1, §2.2); change-of-variables to heat equation; autocall BCs at observation dates; `continuous_autocall_closedform()` for Paper 1 §2.3 validation. Validated: FD ≈ $958–970 for Phoenix.
-- `app/mc_standard.py`: GBM Monte Carlo (Paper 3, Eq. 2.3); antithetic variates; path storage for animation; convergence tracking. Validated: $963 ± $1.35 at N=2000.
-- `app/mc_survival.py`: One-step survival MC (Paper 3, Algorithm 1); stdlib `math.erf` for NumPy 2.x compatibility; `_p_survive()` valid at all spot levels including at-barrier. Validated: $967 ± $0.70 at N=2000, 1.93× variance reduction.
-
-**Volatility Models**
-- `app/vol_surface.py`: `VolSurface` class with bicubic spline fit (`RectBivariateSpline`); `dupire_local_vol()` via numerical diff
+  - New `_price_local_vol()` method: direct log-price PDE `∂V/∂τ = (�

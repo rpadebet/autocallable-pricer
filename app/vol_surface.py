@@ -41,7 +41,123 @@ import numpy as np
 import pandas as pd
 from scipy.interpolate import RectBivariateSpline
 from scipy.stats import norm
+from scipy.optimize import minimize
 from typing import Optional
+
+
+# ---------------------------------------------------------------------------
+# SVI (Stochastic Volatility Inspired) Helpers
+# ---------------------------------------------------------------------------
+
+def _svi_w(k: float | np.ndarray, a: float, b: float, rho: float, m: float, sigma: float) -> float | np.ndarray:
+    """
+    SVI total implied variance parametrization (Gatheral 2004).
+
+    WHY SVI: SVI is a 5-parameter *per-slice* model for the total implied
+    variance w(k) = σ_iv² * T as a function of log-moneyness k = log(K/F).
+    It is the simplest parametrization that:
+        1. Reproduces all standard smile shapes (skew, curvature, wings)
+        2. Is analytic and everywhere differentiable
+        3. Satisfies Roger Lee's moment formula (no-arbitrage large-strike
+           behaviour) by construction if b*(1 + |ρ|) < 4/T.
+
+    Formula:
+        w(k; a, b, ρ, m, σ) = a + b * (ρ*(k-m) + sqrt((k-m)² + σ²))
+
+    Parameters:
+        a:     Vertical translation (overall variance level). a ≥ 0.
+        b:     Angle/slope of the wings. b ≥ 0.
+        rho:   Correlation/skew parameter.  |ρ| < 1.
+        m:     Horizontal translation (location of the minimum). m ∈ ℝ.
+        sigma: Smoothness of the ATM vertex.  σ > 0.
+
+    Args:
+        k:     Log-moneyness: log(K/F), scalar or array.
+        a, b, rho, m, sigma: SVI parameters.
+
+    Returns:
+        Total implied variance w(k).  May be negative in degenerate cases;
+        the caller must clip to ≥ 0 before taking the square root.
+    """
+    diff = k - m
+    return a + b * (rho * diff + np.sqrt(diff ** 2 + sigma ** 2))
+
+
+def _fit_svi_slice(
+    k_arr: np.ndarray,
+    w_arr: np.ndarray,
+    n_starts: int = 4,
+) -> Optional[np.ndarray]:
+    """
+    Fit SVI parameters to a single expiry slice using scipy L-BFGS-B.
+
+    WHY MULTIPLE STARTS: The SVI objective surface is non-convex.
+    A single starting point frequently converges to a local minimum with
+    visible shape errors. Three diverse starting points cover the common
+    patterns (flat, left-skewed, right-skewed smiles).
+
+    Args:
+        k_arr:    Log-moneyness values for this slice (sorted or unsorted).
+        w_arr:    Corresponding total implied variances (IV² * T).
+        n_starts: Number of random restart candidates (default 4).
+
+    Returns:
+        np.ndarray of shape (5,): (a, b, rho, m, sigma), or None if all
+        minimisation attempts fail.
+
+    Constraints enforced via bounds:
+        a ∈ [0,  1.0]
+        b ∈ [0,  2.0]
+        ρ ∈ (-0.999, 0.999)
+        m ∈ [-1.0, 1.0]
+        σ ∈ [1e-4, 2.0]
+    """
+    if len(k_arr) < 5:
+        return None
+
+    def objective(p: np.ndarray) -> float:
+        """Root-mean-squared error between SVI prediction and market w."""
+        w_pred = _svi_w(k_arr, *p)
+        # Penalise negative variance strongly
+        penalty = np.sum(np.maximum(-w_pred, 0.0) ** 2) * 1000.0
+        return float(np.mean((w_pred - w_arr) ** 2)) + penalty
+
+    bounds = [(0.0, 1.0), (0.0, 2.0), (-0.999, 0.999), (-1.0, 1.0), (1e-4, 2.0)]
+
+    # Infer a rough ATM total variance for sensible initial guesses
+    sort_idx = np.argsort(np.abs(k_arr))
+    w_atm_approx = float(w_arr[sort_idx[0]]) if len(sort_idx) else float(np.mean(w_arr))
+    w_atm_approx = max(w_atm_approx, 0.005)
+
+    starting_points = [
+        # Centred symmetric smile (most common starting assumption)
+        [w_atm_approx * 0.8, 0.15, -0.30, 0.00, 0.25],
+        # Left-skewed (typical equity smile)
+        [w_atm_approx * 0.6, 0.20, -0.60, -0.05, 0.20],
+        # Mild skew with higher curvature
+        [w_atm_approx * 0.5, 0.10, -0.20, 0.05, 0.40],
+        # Wider wings
+        [w_atm_approx * 0.7, 0.30, -0.50, 0.00, 0.30],
+    ]
+
+    best_params: Optional[np.ndarray] = None
+    best_val: float = np.inf
+
+    for x0 in starting_points[:n_starts]:
+        try:
+            res = minimize(
+                objective, x0,
+                method="L-BFGS-B",
+                bounds=bounds,
+                options={"maxiter": 300, "ftol": 1e-12, "gtol": 1e-8},
+            )
+            if res.fun < best_val:
+                best_val = res.fun
+                best_params = res.x
+        except Exception:
+            continue
+
+    return best_params
 
 
 # ---------------------------------------------------------------------------
@@ -186,6 +302,11 @@ class VolSurface:
 
         self._spline: Optional[RectBivariateSpline] = None
         self._fit_spline()
+
+        # SVI surface — built lazily via build_svi_surface()
+        self._svi_slices: dict = {}               # ttm → (a, b, rho, m, sigma)
+        self._svi_spline: Optional[RectBivariateSpline] = None
+        self._svi_ready: bool = False
 
     def _fit_spline(self) -> None:
         """
@@ -492,6 +613,361 @@ class VolSurface:
         M, T = np.meshgrid(m_axis, t_axis)
         LV = np.vectorize(lambda m, t: self.dupire_local_vol(m, t))(M, T)
         return M, T, LV
+
+    # =========================================================================
+    # SVI (Stochastic Volatility Inspired) Surface
+    # =========================================================================
+
+    @property
+    def svi_ready(self) -> bool:
+        """True if the SVI surface has been successfully built."""
+        return self._svi_ready
+
+    def build_svi_surface(self) -> dict:
+        """
+        Fit SVI parameters per expiry slice, then build a smooth 2-D interpolator.
+
+        WHY PER-SLICE FITTING: SVI is inherently a *univariate* model for
+        w(k) at a fixed maturity.  Fitting one SVI per slice gives a
+        smooth, arbitrage-free (in the strike direction) smile at each tenor.
+        Cross-slice smoothness is then achieved by re-interpolating the
+        SVI-derived IV values on the same regular moneyness × TTM grid used
+        by the cubic-spline surface, and fitting a new bivariate spline to
+        that cleaner grid.
+
+        HOW IT IMPROVES DUPIRE: The Dupire formula's denominator d²C/dK² is
+        extremely sensitive to noise in the IV surface.  The SVI per-slice fit
+        acts as a sophisticated denoiser: it captures the genuine smile
+        curvature while discarding bid-ask noise, leading to a materially
+        smoother d²C/dK² and therefore a less-jagged local vol surface.
+
+        Returns:
+            dict with keys:
+                "n_slices_fitted": int   — number of expiry slices successfully fitted
+                "slice_rmse":  dict     — per-slice RMSE in vol points (IV space)
+                "svi_ready":   bool     — True if surface was built successfully
+        """
+        df = self.raw_df.copy()
+
+        # Use calls only (puts can appear with different quoting conventions)
+        if "optionType" in df.columns:
+            calls_df = df[df["optionType"] == "call"].copy()
+        else:
+            calls_df = df.copy()
+
+        # --- Group by expiry date or, if missing, rounded TTM ----------------
+        if "expiry" in calls_df.columns:
+            group_col = "expiry"
+        else:
+            calls_df["_ttm_bin"] = (calls_df["ttm_years"] * 4).round() / 4.0
+            group_col = "_ttm_bin"
+
+        svi_slices: dict = {}
+        slice_rmse: dict = {}
+
+        for key, grp in calls_df.groupby(group_col):
+            grp = grp.dropna(subset=["impliedVolatility", "ttm_years", "moneyness"])
+            if len(grp) < 6:  # Need at least 6 points for a reliable 5-param fit
+                continue
+
+            ttm = float(grp["ttm_years"].mean())
+            if ttm < 0.05 or ttm > 3.5:
+                continue
+
+            # Log-moneyness: k = log(K / F)  where F = S₀ * exp((r-q)*T)
+            F = self.S0 * np.exp((self.r - self.q) * ttm)
+            k_arr = np.log(grp["moneyness"].values * self.S0 / F)
+
+            # Total implied variance: w = σ_iv² * T
+            w_arr = grp["impliedVolatility"].values ** 2 * ttm
+
+            # Sanity filter: remove nonsensical quotes
+            valid = (w_arr > 1e-5) & (w_arr < 4.0) & (np.abs(k_arr) < 1.5)
+            if valid.sum() < 5:
+                continue
+
+            k_clean = k_arr[valid]
+            w_clean = w_arr[valid]
+
+            fitted = _fit_svi_slice(k_clean, w_clean)
+            if fitted is None:
+                continue
+
+            # Compute in-sample RMSE in IV space for diagnostics
+            w_pred = np.maximum(_svi_w(k_clean, *fitted), 1e-8)
+            iv_pred = np.sqrt(w_pred / ttm)
+            iv_mkt  = np.sqrt(w_clean / ttm)
+            rmse_vp = float(np.sqrt(np.mean((iv_pred - iv_mkt) ** 2)) * 100)
+
+            svi_slices[ttm] = fitted
+            slice_rmse[round(ttm, 4)] = rmse_vp
+
+        self._svi_slices = svi_slices
+
+        if len(svi_slices) < 2:
+            self._svi_ready = False
+            return {"n_slices_fitted": len(svi_slices), "slice_rmse": slice_rmse, "svi_ready": False}
+
+        # --- Rebuild regular-grid IV using per-slice SVI ---------------------
+        # Evaluate each SVI slice at the same moneyness knots as the cubic spline.
+        ttm_svi = np.array(sorted(svi_slices.keys()))
+        m_knots = self._moneyness_knots
+        grid_ivs = np.full((len(m_knots), len(ttm_svi)), np.nan)
+
+        for j, ttm in enumerate(ttm_svi):
+            p = svi_slices[ttm]
+            F = self.S0 * np.exp((self.r - self.q) * ttm)
+            for i, m in enumerate(m_knots):
+                k = np.log(m * self.S0 / F)
+                w = _svi_w(k, *p)
+                w = max(float(w), 1e-8)
+                iv = np.sqrt(w / ttm)
+                grid_ivs[i, j] = float(np.clip(iv, 0.02, 1.0))
+
+        # Forward-fill any remaining NaNs (should be rare given SVI covers
+        # the full moneyness range analytically)
+        for i in range(len(m_knots)):
+            row = grid_ivs[i, :]
+            valid_mask = ~np.isnan(row)
+            if valid_mask.sum() >= 2:
+                grid_ivs[i, :] = np.interp(
+                    ttm_svi, ttm_svi[valid_mask], row[valid_mask],
+                )
+            elif valid_mask.sum() == 1:
+                grid_ivs[i, :] = row[valid_mask][0]
+            else:
+                grid_ivs[i, :] = 0.17  # Ultimate fallback
+
+        grid_ivs = np.clip(grid_ivs, 0.02, 1.0)
+
+        # Fit bivariate spline to the SVI-smoothed grid
+        # Smoothing is minimal (s=0.0005) because the SVI values are already
+        # well-behaved; heavy smoothing would throw away the model's shape.
+        try:
+            ky = min(3, len(ttm_svi) - 1)
+            self._svi_spline = RectBivariateSpline(
+                m_knots, ttm_svi, grid_ivs,
+                kx=3, ky=ky, s=0.0005,
+            )
+            self._svi_ready = True
+        except Exception:
+            # Degree-1 fallback
+            try:
+                self._svi_spline = RectBivariateSpline(
+                    m_knots, ttm_svi, grid_ivs,
+                    kx=1, ky=1, s=0.0,
+                )
+                self._svi_ready = True
+            except Exception:
+                self._svi_ready = False
+
+        return {
+            "n_slices_fitted": len(svi_slices),
+            "slice_rmse": slice_rmse,
+            "svi_ready": self._svi_ready,
+        }
+
+    def svi_implied_vol(self, moneyness: float, ttm: float) -> float:
+        """
+        Return SVI-smoothed implied vol for a given (moneyness, TTM) point.
+
+        Falls back to the cubic-spline surface if SVI has not been built.
+
+        Args:
+            moneyness: K/S ratio (1.0 = ATM).
+            ttm:       Time to maturity in years.
+
+        Returns:
+            Implied vol as decimal. Clamped to [0.02, 1.0].
+        """
+        if not self._svi_ready or self._svi_spline is None:
+            return self.implied_vol(moneyness, ttm)
+        m_c = float(np.clip(moneyness, self._moneyness_knots[0], self._moneyness_knots[-1]))
+        t_c = float(np.clip(ttm, min(self._svi_slices.keys()), max(self._svi_slices.keys())))
+        iv = float(self._svi_spline(m_c, t_c)[0, 0])
+        return float(np.clip(iv, 0.02, 1.0))
+
+    def svi_surface_grid(
+        self,
+        n_moneyness: int = 30,
+        n_ttm: int = 20,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Evaluate the SVI-smoothed IV surface on a regular grid for 3D plotting.
+
+        Returns:
+            (moneyness_grid, ttm_grid, iv_grid) — all shape (n_ttm, n_moneyness).
+        """
+        m_axis = np.linspace(0.72, 1.32, n_moneyness)
+        t_axis = np.linspace(0.10, 2.5, n_ttm)
+        M, T = np.meshgrid(m_axis, t_axis)
+        IV = np.vectorize(lambda m, t: self.svi_implied_vol(m, t))(M, T)
+        return M, T, IV
+
+    def svi_dupire_local_vol_grid(
+        self,
+        m_axis: np.ndarray,
+        T_axis: np.ndarray,
+        dK: float = 0.01,
+        dT: float = 0.01,
+    ) -> np.ndarray:
+        """
+        Compute the SVI-based Dupire local vol grid (vectorised).
+
+        WHY SMOOTHER THAN CUBIC-SPLINE DUPIRE:
+            The SVI spline is constructed from per-slice SVI fits, which
+            capture the true smile shape with only 5 parameters per tenor.
+            This suppresses quote-level noise before computing d²C/dK²,
+            so the Dupire denominator is well-behaved across the surface.
+
+        The algorithm is identical to dupire_local_vol_grid() except that
+        it reads implied vols from _svi_spline instead of _spline.
+
+        Args:
+            m_axis: 1-D moneyness array (length nM).
+            T_axis: 1-D TTM array in years (length nT).
+            dK:     Moneyness step for strike derivatives (default 1%).
+            dT:     Time step for time derivative (default 0.01 yr).
+
+        Returns:
+            np.ndarray of shape (nT, nM).  Values clamped to [0.05, 1.0].
+        """
+        from scipy.special import ndtr
+
+        if not self._svi_ready or self._svi_spline is None:
+            # Graceful fallback to cubic-spline Dupire
+            return self.dupire_local_vol_grid(m_axis, T_axis, dK, dT)
+
+        S, r, q = self.S0, self.r, self.q
+        M_g, T_g = np.meshgrid(m_axis, T_axis)
+        m_flat   = M_g.ravel()
+        t_flat   = T_g.ravel()
+
+        # Vectorised SVI IV lookup at the 4 stencil positions
+        def _ev_svi(m: np.ndarray, t: np.ndarray) -> np.ndarray:
+            """Evaluate _svi_spline element-wise, clamped."""
+            m_c = np.clip(m, self._moneyness_knots[0], self._moneyness_knots[-1])
+            t_min = min(self._svi_slices.keys()) if self._svi_slices else 0.08
+            t_max = max(self._svi_slices.keys()) if self._svi_slices else 3.0
+            t_c = np.clip(t, t_min, t_max)
+            return np.clip(self._svi_spline.ev(m_c, t_c), 0.02, 1.0)
+
+        iv_0T  = _ev_svi(m_flat,      t_flat     )
+        iv_pT  = _ev_svi(m_flat + dK, t_flat     )
+        iv_mT  = _ev_svi(m_flat - dK, t_flat     )
+        iv_0dT = _ev_svi(m_flat,      t_flat + dT)
+
+        # Vectorised Black-Scholes call (same as dupire_local_vol_grid)
+        def _bs_vec(iv: np.ndarray, m: np.ndarray, t: np.ndarray) -> np.ndarray:
+            K = m * S
+            safe_t  = np.maximum(t, 1e-6)
+            safe_iv = np.maximum(iv, 1e-6)
+            d1 = (np.log(S / K) + (r - q + 0.5 * safe_iv ** 2) * safe_t) / (safe_iv * np.sqrt(safe_t))
+            d2 = d1 - safe_iv * np.sqrt(safe_t)
+            pv = np.exp(-r * safe_t) * (S * np.exp((r - q) * safe_t) * ndtr(d1) - K * ndtr(d2))
+            intrinsic = np.maximum(S * np.exp(-q * safe_t) - K * np.exp(-r * safe_t), 0.0)
+            return np.where(t < 1e-6, intrinsic, pv)
+
+        C_0T  = _bs_vec(iv_0T,  m_flat,      t_flat     )
+        C_pT  = _bs_vec(iv_pT,  m_flat + dK, t_flat     )
+        C_mT  = _bs_vec(iv_mT,  m_flat - dK, t_flat     )
+        C_0dT = _bs_vec(iv_0dT, m_flat,      t_flat + dT)
+
+        K_flat  = m_flat * S
+        dCdT    = (C_0dT - C_0T) / dT
+        dCdK    = (C_pT  - C_mT) / (2.0 * dK * S)
+        d2CdK2  = (C_pT  - 2.0 * C_0T + C_mT) / (dK * S) ** 2
+        num     = dCdT + (r - q) * K_flat * dCdK + q * C_0T
+        denom   = 0.5 * K_flat ** 2 * d2CdK2
+
+        valid   = (denom > 1e-10) & (num > 0)
+        loc_var = np.where(valid, num / np.where(denom > 1e-10, denom, 1.0), iv_0T ** 2)
+        lv_flat = np.clip(np.sqrt(np.maximum(loc_var, 0.0)), 0.05, 1.0)
+
+        return lv_flat.reshape(T_g.shape)
+
+    def svi_dupire_surface_grid(
+        self,
+        n_moneyness: int = 25,
+        n_ttm: int = 15,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Evaluate the SVI-based Dupire local vol surface on a grid for plotting.
+
+        Returns:
+            (moneyness_grid, ttm_grid, local_vol_grid) — shape (n_ttm, n_moneyness).
+        """
+        m_axis = np.linspace(0.80, 1.20, n_moneyness)
+        t_axis = np.linspace(0.25, 2.0, n_ttm)
+        LV = self.svi_dupire_local_vol_grid(m_axis, t_axis)
+        M, T = np.meshgrid(m_axis, t_axis)
+        return M, T, LV
+
+    # =========================================================================
+    # CSV Export Helpers
+    # =========================================================================
+
+    def to_csv_implied_vol(
+        self,
+        n_moneyness: int = 30,
+        n_ttm: int = 20,
+    ) -> str:
+        """
+        Export the cubic-spline implied vol surface to a CSV string.
+
+        Layout:
+            Row = one TTM value.
+            Column = one moneyness value.
+            Cell = implied vol (%).
+
+        Args:
+            n_moneyness: Number of moneyness points (default 30).
+            n_ttm:       Number of TTM points (default 20).
+
+        Returns:
+            CSV string ready for st.download_button().
+        """
+        M, T, IV = self.surface_grid(n_moneyness, n_ttm)
+        m_axis = M[0, :]
+        t_axis = T[:, 0]
+        cols = [f"M={m:.3f}" for m in m_axis]
+        df_out = pd.DataFrame(IV * 100, index=t_axis, columns=cols)
+        df_out.index.name = "TTM_years"
+        return df_out.to_csv(float_format="%.4f")
+
+    def to_csv_dupire(
+        self,
+        method: str = "cubic",
+        n_moneyness: int = 25,
+        n_ttm: int = 15,
+    ) -> str:
+        """
+        Export a Dupire local vol surface to a CSV string.
+
+        Args:
+            method:      "cubic" (default) for cubic-spline Dupire,
+                         "svi" for the SVI-based Dupire (requires build_svi_surface()).
+            n_moneyness: Number of moneyness points.
+            n_ttm:       Number of TTM points.
+
+        Returns:
+            CSV string ready for st.download_button().
+            Returns an error CSV if the SVI surface is not yet built.
+        """
+        if method == "svi":
+            if not self._svi_ready:
+                return "error,SVI surface not built — call build_svi_surface() first\n"
+            M, T, LV = self.svi_dupire_surface_grid(n_moneyness, n_ttm)
+        else:
+            M, T, LV = self.dupire_surface_grid(n_moneyness, n_ttm)
+
+        m_axis = M[0, :]
+        t_axis = T[:, 0]
+        cols = [f"M={m:.3f}" for m in m_axis]
+        df_out = pd.DataFrame(LV * 100, index=t_axis, columns=cols)
+        df_out.index.name = "TTM_years"
+        label = "SVI_Dupire_LocalVol_pct" if method == "svi" else "CubicSpline_Dupire_LocalVol_pct"
+        return f"# {label}\n" + df_out.to_csv(float_format="%.4f")
 
     def calibration_rmse(self, heston_model) -> float:
         """
