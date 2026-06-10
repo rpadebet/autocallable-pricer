@@ -816,4 +816,8 @@ def continuous_autocall_closedform(
     #   Coupon stream: simplified as coupon rate * expected time under the barrier,
     #   discounted at the midpoint. expected_life blends the two exit scenarios.
     expected_life = p_cross * expected_call_time + p_no_cross * T
-    pv_coupons = coupon_pa * notional * expected_life * np.exp(-r * expected_li
+    pv_coupons = coupon_pa * notional * expected_life * np.exp(-r * expected_life / 2.0)
+
+    price = pv_call + pv_no_call + pv_coupons
+    # Clip to sane range: floor at 0, cap at par + all coupons (can't exceed)
+    return float(np.clip(price, 0.0, notional * (1.0 + coupon_pa * T)))

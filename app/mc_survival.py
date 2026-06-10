@@ -545,4 +545,10 @@ class MCSurvivalPricer:
                 call_indices.append(ci)
 
         price_est = float(payoffs.mean())
-        se = float(payoffs.std
+        se = float(payoffs.std(ddof=1) / math.sqrt(N)) if N > 1 else 0.0
+        return MCResult(
+            price=price_est, std_err=se,
+            ci_low=price_est - 1.96*se, ci_high=price_est + 1.96*se,
+            n_paths=N, paths=stored_paths, call_times=call_indices,
+            convergence_series=conv_series,
+        )

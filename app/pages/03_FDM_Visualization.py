@@ -724,4 +724,26 @@ solved in O(N_x) using the Thomas algorithm.
 same accuracy with far fewer time steps.
 
 | Property | Explicit | Crank-Nicolson |
-|----------|----------|---------
+|----------|----------|----------------|
+| Stability | Conditional (ρ ≤ 0.5) | Unconditional |
+| Time accuracy | O(Δτ) | O(Δτ²) |
+| Space accuracy | O(Δx²) | O(Δx²) |
+| Per-step cost | O(N_x) — vector add | O(N_x) — Thomas solve |
+| Steps needed for same accuracy | High | Low |
+
+**When to use each**
+
+- **Explicit**: Simpler to implement and debug; direct connection to Paper 1's derivation;
+  good for education and validation. Fine for moderate grids (N_x ≤ 200) where the
+  CFL constraint is not binding.
+
+- **Crank-Nicolson**: Preferred for production use. Fewer time steps at the same
+  accuracy level means faster pricing at large grids. Essential when N_x > 500 or
+  when very fine time resolution is needed (e.g., daily observation dates).
+""")
+
+    # ── Refresh notice ─────────────────────────────────────────────────────────
+    st.caption(
+        "Results cached for this session. Click **Run Scheme Comparison** again to "
+        "recompute with updated sidebar parameters."
+    )

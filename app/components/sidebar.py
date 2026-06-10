@@ -640,4 +640,15 @@ def render_sidebar(page_name: str = "") -> dict:
         "gamma":               gamma,
         "rho":                 rho,
         "lam_j":               lam_j,
-        "mu_j":    
+        "mu_j":                mu_j,
+        "sig_j":               sig_j,
+        "n_paths":             n_paths,
+        "n_steps":             n_steps,
+        "seed":                seed,
+        "antithetic":          antithetic,
+        "N_x":                 N_x,
+        "N_tau":               N_tau,
+        "x_min":               x_min,
+    }
+
+    return params
