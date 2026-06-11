@@ -367,14 +367,20 @@ class MCSurvivalPricer:
         # Terminal payoff for surviving weight
         if L > 1e-15:
             T = self.ac.maturity_years
-            # european_ki: knock-in observed at maturity only
-            ki = s < self.ac.protection_barrier * self.S_ref
-            if ki:
-                term_pv = (max(s / self.S_ref, self.ac.protection_floor)
-                           * self.ac.notional * math.exp(-self.r * T))
+            if self.ac.protection_type == "soft_protection":
+                # Digital autocall: capital-protected terminal, coupon at 100%
+                base = max(self.ac.protection_floor, s / self.S_ref) * self.ac.notional
+                cpn = self.ac.coupon_per_period() if s >= self.S_ref else 0.0
+                term_pv = (base + cpn) * math.exp(-self.r * T)
             else:
-                coupon = self.ac.coupon_per_period() if s >= self.ac.coupon_barrier * self.S_ref else 0.0
-                term_pv = (self.ac.notional + coupon) * math.exp(-self.r * T)
+                # european_ki: knock-in observed at maturity only
+                ki = s < self.ac.protection_barrier * self.S_ref
+                if ki:
+                    term_pv = (max(s / self.S_ref, self.ac.protection_floor)
+                               * self.ac.notional * math.exp(-self.r * T))
+                else:
+                    coupon = self.ac.coupon_per_period() if s >= self.ac.coupon_barrier * self.S_ref else 0.0
+                    term_pv = (self.ac.notional + coupon) * math.exp(-self.r * T)
             payoff += L * term_pv
 
         return payoff, spots, first_call_idx
@@ -527,16 +533,22 @@ class MCSurvivalPricer:
         # Terminal payoff for surviving paths
         if active.any():
             T = self.ac.maturity_years
-            # european_ki: knock-in observed at maturity only
-            ki = s[active] < self.ac.protection_barrier * self.S_ref
-            cpn_cond = s[active] >= self.ac.coupon_barrier * self.S_ref
-            cpn = np.where(cpn_cond, self.ac.coupon_per_period(), 0.0)
-            term_pv = np.where(
-                ki,
-                np.maximum(s[active] / self.S_ref, self.ac.protection_floor)
-                    * self.ac.notional * math.exp(-self.r * T),
-                (self.ac.notional + cpn) * math.exp(-self.r * T),
-            )
+            if self.ac.protection_type == "soft_protection":
+                # Digital autocall: capital-protected terminal with 100% coupon threshold
+                base = np.maximum(self.ac.protection_floor, s[active] / self.S_ref) * self.ac.notional
+                cpn = np.where(s[active] >= self.S_ref, self.ac.coupon_per_period(), 0.0)
+                term_pv = (base + cpn) * math.exp(-self.r * T)
+            else:
+                # european_ki: knock-in observed at maturity only
+                ki = s[active] < self.ac.protection_barrier * self.S_ref
+                cpn_cond = s[active] >= self.ac.coupon_barrier * self.S_ref
+                cpn = np.where(cpn_cond, self.ac.coupon_per_period(), 0.0)
+                term_pv = np.where(
+                    ki,
+                    np.maximum(s[active] / self.S_ref, self.ac.protection_floor)
+                        * self.ac.notional * math.exp(-self.r * T),
+                    (self.ac.notional + cpn) * math.exp(-self.r * T),
+                )
             payoffs += active * L * term_pv
 
         # Convergence tracking

@@ -421,17 +421,23 @@ class MCStandardPricer:
         survived = ~called
         if survived.any():
             S_T = S_paths[survived, -1]
-            # european_ki: knock-in observed at maturity only (terminal spot)
-            ki_surv = S_T < self.ac.protection_barrier * self.S_ref
             T = self.ac.maturity_years
 
-            coupon_mask = S_T >= self.ac.coupon_barrier * self.S_ref
-            payoffs_surv = np.where(
-                ki_surv,
-                np.maximum(S_T / self.S_ref, self.ac.protection_floor) * self.ac.notional * np.exp(-self.r * T),
-                (self.ac.notional + np.where(coupon_mask, self.ac.coupon_per_period(), 0.0)) * np.exp(-self.r * T),
-            )
-            payoffs[survived] = payoffs_surv
+            if self.ac.protection_type == "soft_protection":
+                # Digital autocall: capital-protected terminal with 100% coupon threshold
+                base = np.maximum(self.ac.protection_floor, S_T / self.S_ref) * self.ac.notional
+                cpn = np.where(S_T >= self.S_ref, self.ac.coupon_per_period(), 0.0)
+                payoffs[survived] = (base + cpn) * np.exp(-self.r * T)
+            else:
+                # european_ki: knock-in observed at maturity only (terminal spot)
+                ki_surv = S_T < self.ac.protection_barrier * self.S_ref
+                coupon_mask = S_T >= self.ac.coupon_barrier * self.S_ref
+                payoffs_surv = np.where(
+                    ki_surv,
+                    np.maximum(S_T / self.S_ref, self.ac.protection_floor) * self.ac.notional * np.exp(-self.r * T),
+                    (self.ac.notional + np.where(coupon_mask, self.ac.coupon_per_period(), 0.0)) * np.exp(-self.r * T),
+                )
+                payoffs[survived] = payoffs_surv
 
         if store_paths:
             n_store = min(max_stored, n_paths)

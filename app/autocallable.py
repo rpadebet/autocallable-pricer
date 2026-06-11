@@ -359,11 +359,12 @@ class AutoCallable:
         discount = np.exp(-r * T)
 
         if self.protection_type == "soft_protection":
-            # Soft protection: investor always receives at least protection_floor
-            # At maturity, if above call_barrier get digital_coupon too
+            # Soft protection: investor always receives at least protection_floor.
+            # At maturity, the digital coupon is paid if spot >= initial level (100%),
+            # not the call/coupon barrier (105%) used for early observation dates.
             base_redemption = max(self.protection_floor, spot_T / self.S_ref) * self.notional
-            coupon = self.coupon_per_period() if self.coupon_is_paid(spot_T) else 0.0
-            return (base_redemption + coupon) * discount
+            maturity_coupon = self.coupon_per_period() if spot_T >= self.S_ref else 0.0
+            return (base_redemption + maturity_coupon) * discount
 
         if not knocked_in:
             # No knock-in: principal returned in full plus any earned coupon
