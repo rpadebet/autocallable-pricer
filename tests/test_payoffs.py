@@ -357,4 +357,16 @@ def test_step_down_total_call_prob_ge_fixed_barrier():
     params_px = get_security("Phoenix Autocall")
     ac_px = from_security_dict(params_px, S_ref=S_REF)
 
-    sigma, r, q = 0.20, 0.045,
+    sigma, r, q = 0.20, 0.045, 0.014
+
+    probs_sd = ac_sd.call_probabilities(sigma=sigma, r=r, q=q)
+    probs_px = ac_px.call_probabilities(sigma=sigma, r=r, q=q)
+
+    total_sd = sum(probs_sd)
+    total_px = sum(probs_px)
+
+    assert total_sd >= total_px - 0.01, (
+        f"Step-down total call prob ({total_sd:.4f}) should be >= "
+        f"fixed barrier total ({total_px:.4f})"
+    )
+
