@@ -4,6 +4,24 @@ All notable changes to the AutoCallable Analytics Platform are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 Versioning follows [Semantic Versioning](https://semver.org/): patch (0.0.X) for bug fixes, minor (0.X.0) for new features, major (X.0.0) for architecture changes.
 
+## [0.6.5] — 2026-06-11
+
+### Fixed
+
+- **`app/heston.py` — Heston calibration bounds tightened**
+  `theta` upper bound: `0.5 → 0.20` (caps σ∞ at 44.7%; the old bound allowed 70% long-run
+  vol, producing a degenerate near-GBM solution on noisy Market Open snapshots).
+  `gamma` lower bound: `0.05 → 0.10` (prevents near-zero vol-of-vol which makes Heston
+  degenerate to Black-Scholes). Added a 5th starting point at `(v0=0.05, κ=5, θ=0.05,
+  γ=0.60, ρ=-0.65)` to cover the fast mean-reversion regime.
+
+- **`app/heston.py` — Bates calibration data and bounds fixed**
+  Sample size increased from 25 → 75 quotes, making the Bates RMSE roughly comparable
+  to Heston (which uses ~80 quotes via VolSurface). `theta` and `gamma` bounds matched
+  to the new Heston bounds so Bates cannot produce solutions that Heston would reject.
+  Added a 4th generic starting point `(v0=0.04, κ=2, θ=0.04, γ=0.40, ρ=-0.70, λ=0.30)`
+  independent of the Heston warm-start, so Bates can escape degenerate Heston solutions.
+
 ## [0.6.4] — 2026-06-11
 
 ### Fixed

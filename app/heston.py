@@ -513,10 +513,12 @@ class HestonModel:
             return (np.mean(errors) if errors else 999.0) + feller_penalty
 
         bounds = [
-            (0.001, 0.5),    # v0: initial variance
-            (0.1, 10.0),     # kappa: mean reversion speed
-            (0.001, 0.5),    # theta: long-run variance
-            (0.05, 1.5),     # gamma: vol-of-vol
+            (0.001, 0.50),   # v0: initial variance (σ₀ up to 70%)
+            (0.1,  10.0),    # kappa: mean reversion speed
+            (0.001, 0.20),   # theta: long-run variance — cap at σ∞=44.7%; θ=0.5 lets
+                             # the optimizer produce a degenerate near-BS high-vol solution
+            (0.10,  1.5),    # gamma: vol-of-vol — floor at 0.10 prevents near-zero
+                             # stochastic vol, which makes Heston degenerate to GBM
             (-0.99, -0.01),  # rho: correlation (negative for equities)
         ]
 
@@ -538,12 +540,13 @@ class HestonModel:
             except Exception:
                 pass
         else:
-            # L-BFGS-B with 4 diverse starting points — typical SPX calibration range
+            # L-BFGS-B with 5 diverse starting points — typical SPX calibration range
             starting_points = [
                 [self.v0, self.kappa, self.theta, self.gamma, self.rho],
-                [0.04, 2.0, 0.04, 0.40, -0.70],
-                [0.06, 1.0, 0.06, 0.50, -0.60],
-                [0.02, 3.0, 0.03, 0.30, -0.80],
+                [0.04, 2.0,  0.04, 0.40, -0.70],
+                [0.06, 1.0,  0.06, 0.50, -0.60],
+                [0.02, 3.0,  0.03, 0.30, -0.80],
+                [0.05, 5.0,  0.05, 0.60, -0.65],  # fast mean-reversion regime
             ]
             for x0 in starting_points:
                 x0c = [float(np.clip(x0[i], bounds[i][0], bounds[i][1])) for i in range(5)]
@@ -1242,8 +1245,11 @@ def calibrate_bates(
     df = market_df.dropna(subset=["impliedVolatility"])
     df = df[(df["ttm_years"] >= 0.1) & (df["ttm_years"] <= 2.0)]
     df = df[(df["moneyness"] >= 0.80) & (df["moneyness"] <= 1.20)]
-    if len(df) > 25:
-        df = df.sample(25, random_state=42)
+    # 75 points gives the 8-param optimizer enough data to distinguish jump vs diffusion
+    # contributions. 25 points under-constrained the jump params and made the RMSE
+    # incomparable with Heston (which uses ~80 points via VolSurface).
+    if len(df) > 75:
+        df = df.sample(75, random_state=42)
 
     K_arr  = df["moneyness"].values * S0
     t_arr  = df["ttm_years"].values
@@ -1274,13 +1280,13 @@ def calibrate_bates(
         return (np.mean(errors) if errors else 999.0) + feller_pen
 
     bounds = [
-        (0.001, 0.5),    # v0
-        (0.1, 10.0),     # kappa
-        (0.001, 0.5),    # theta
-        (0.05, 1.5),     # gamma
+        (0.001, 0.50),   # v0
+        (0.1,  10.0),    # kappa
+        (0.001, 0.20),   # theta — matched to Heston bound; prevents degenerate high-θ solutions
+        (0.10,  1.5),    # gamma — floor matched to Heston bound
         (-0.99, -0.01),  # rho
-        (0.0, 5.0),      # lam
-        (-0.5, 0.1),     # mu_J
+        (0.0,   5.0),    # lam
+        (-0.5,  0.1),    # mu_J
         (0.01, 0.5),     # sig_J
     ]
 
@@ -1295,9 +1301,12 @@ def calibrate_bates(
     _hrho   = heston_init.get("rho",  -0.7)  if heston_init else -0.7
 
     starting_points = [
-        [_hv0, _hkappa, _htheta, _hgamma, _hrho, 0.02, -0.05, 0.10],
-        [_hv0, _hkappa, _htheta, _hgamma, _hrho, 0.30, -0.05, 0.10],
-        [_hv0, _hkappa, _htheta, _hgamma, _hrho, 1.00, -0.10, 0.15],
+        [_hv0,  _hkappa, _htheta, _hgamma, _hrho,  0.02, -0.05, 0.10],
+        [_hv0,  _hkappa, _htheta, _hgamma, _hrho,  0.30, -0.05, 0.10],
+        [_hv0,  _hkappa, _htheta, _hgamma, _hrho,  1.00, -0.10, 0.15],
+        # Generic SPX starting point independent of Heston warm-start — ensures Bates
+        # can escape if the Heston solution is degenerate (e.g. theta at bound).
+        [0.04,  2.00,    0.04,    0.40,    -0.70,  0.30, -0.05, 0.10],
     ]
 
     best_params = starting_points[0]
