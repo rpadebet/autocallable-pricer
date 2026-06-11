@@ -363,11 +363,12 @@ with tab2:
         with st.spinner("Step 3 of 3 — Calibrating Bates (8 params, warm-started)… ~15–30 s"):
             try:
                 heston_init = st.session_state.get("heston_cmp_params") or st.session_state.get("heston_cal")
+                merton_init = st.session_state.get("merton_cal")
                 mkt_df = snap_df[snap_df["optionType"] == "call"].copy()
                 mkt_df = mkt_df.dropna(subset=["impliedVolatility"])
                 mkt_df = mkt_df[mkt_df["impliedVolatility"] > 0]
                 cal_b = calibrate_bates(mkt_df, S0=params["S0"], r=params["r"], q=params["q"],
-                                        heston_init=heston_init)
+                                        heston_init=heston_init, merton_init=merton_init)
                 st.session_state["bates_cal"] = cal_b
             except Exception as e:
                 st.error(f"Bates calibration failed: {e}")
@@ -392,20 +393,29 @@ with tab2:
 
         with col_h:
             st.markdown("**Heston** (5 params)")
-            if cal_h and heston_obj:
-                feller = heston_obj.kappa * heston_obj.theta > 0.5 * heston_obj.gamma**2
+            if cal_h:
+                if heston_obj:
+                    _v0 = heston_obj.v0; _k = heston_obj.kappa; _t = heston_obj.theta
+                    _g = heston_obj.gamma; _r = heston_obj.rho
+                    _feller = _k * _t > 0.5 * _g**2
+                    _rmse = cal_h['rmse']
+                else:
+                    _v0 = cal_h['v0']; _k = cal_h['kappa']; _t = cal_h['theta']
+                    _g = cal_h['gamma']; _r = cal_h['rho']
+                    _feller = cal_h.get('feller_satisfied', False)
+                    _rmse = cal_h.get('rmse', cal_h.get('rmse_vol_pts', 0) / 100)
                 st.markdown(f"""
 | Param | Value |
 |---|---|
-| v₀ | {heston_obj.v0:.5f} |
-| σ₀ | {heston_obj.v0**0.5*100:.2f}% |
-| κ | {heston_obj.kappa:.4f} |
-| θ | {heston_obj.theta:.5f} |
-| σ∞ | {heston_obj.theta**0.5*100:.2f}% |
-| γ | {heston_obj.gamma:.4f} |
-| ρ | {heston_obj.rho:.4f} |
-| RMSE | {cal_h['rmse']*100:.2f} v-pts |
-| Feller | {"✅" if feller else "❌"} |
+| v\u2080 | {_v0:.5f} |
+| \u03c3\u2080 | {_v0**0.5*100:.2f}% |
+| \u03ba | {_k:.4f} |
+| \u03b8 | {_t:.5f} |
+| \u03c3\u221e | {_t**0.5*100:.2f}% |
+| \u03b3 | {_g:.4f} |
+| \u03c1 | {_r:.4f} |
+| RMSE | {_rmse*100:.2f} v-pts |
+| Feller | {"\u2705" if _feller else "\u274c"} |
 """)
             else:
                 st.caption("Not calibrated")
