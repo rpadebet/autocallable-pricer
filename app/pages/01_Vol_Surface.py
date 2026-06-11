@@ -101,10 +101,8 @@ if snap_df is None or snap_df.empty:
 # ── Timing guide ────────────────────────────────────────────────────────────
 st.caption(
     "⏱ **Expected run times:** "
-    "Build Vol Surface ~3 s  ·  "
-    "Calibrate All Models ~60–120 s (3 sequential optimizations)  ·  "
-    "Build SVI Surface ~10 s  ·  "
-    "Dupire Local Vol ~5 s"
+    "Build Vol Surface ~15 s (spline + SVI + all Dupire surfaces auto-built in one click)  ·  "
+    "Calibrate All Models ~60–120 s (3 sequential optimizations)"
 )
 
 st.divider()
@@ -132,11 +130,23 @@ with tab1:
 
     run_surf = st.button("📊 Build Vol Surface", type="primary", key="btn_build_surf",
                          use_container_width=False,
-                         help="Fits spline to snapshot — ~3 s")
+                         help="Fits spline + SVI + all Dupire surfaces — ~15 s")
 
-    if run_surf or st.session_state.get("vol_built", False):
+    # Cache key: invalidates when snapshot, spot, rate, or dividend yield change.
+    # Prevents recreating the VolSurface object (and losing svi_ready=True) on
+    # every page visit after an initial build.
+    _surf_key = (f"surf_{params.get('snapshot_key', '')}_{params['S0']}"
+                 f"_{params['r']}_{params['q']}")
+    _surf_already_built = (
+        st.session_state.get("surf_built_for") == _surf_key
+        and st.session_state.get("vol_surf_obj") is not None
+    )
+
+    if run_surf or (st.session_state.get("vol_built", False) and not _surf_already_built):
         st.session_state["vol_built"] = True
-        with st.spinner("Fitting bicubic spline to implied vol data…"):
+
+        # Step 1: bicubic spline + cubic Dupire
+        with st.spinner("Step 1/2 — Fitting bicubic spline to implied vol data…"):
             try:
                 vol_surf = VolSurface(
                     snapshot=snap_df,
@@ -145,16 +155,36 @@ with tab1:
                     q=params["q"],
                 )
                 st.session_state["vol_surf_obj"] = vol_surf
+                st.session_state["surf_built_for"] = _surf_key
 
-                # Auto-build Dupire grids and cache them so they survive page
-                # navigation and are instantly available in Tab 3.
-                _dup_key = f"dupire_{params.get('snapshot_key','')}_{params['S0']}_{params['r']}"
-                if st.session_state.get("dupire_built_for") != _dup_key:
-                    st.session_state["dupire_cubic_grid"] = vol_surf.dupire_surface_grid(n_moneyness=25, n_ttm=15)
-                    st.session_state["dupire_built_for"] = _dup_key
+                _dup_key = (f"dupire_{params.get('snapshot_key', '')}"
+                            f"_{params['S0']}_{params['r']}")
+                st.session_state["dupire_cubic_grid"] = vol_surf.dupire_surface_grid(
+                    n_moneyness=25, n_ttm=15)
+                st.session_state["dupire_built_for"] = _dup_key
             except Exception as e:
                 st.error(f"VolSurface error: {e}")
                 st.stop()
+
+        # Step 2: SVI per-slice fit + SVI Dupire — auto-built so the Dupire tab
+        # and the Pricer page have a smooth local-vol surface without any extra click.
+        with st.spinner("Step 2/2 — Fitting SVI per expiry slice & building smooth Dupire surface…"):
+            try:
+                svi_result = vol_surf.build_svi_surface()
+                _svi_key = (f"svi_{params.get('snapshot_key', '')}"
+                            f"_{params['S0']}_{params['r']}")
+                st.session_state["svi_built_for"] = _svi_key
+                if svi_result["svi_ready"]:
+                    M_sv, T_sv, LV_sv = vol_surf.svi_dupire_surface_grid(
+                        n_moneyness=25, n_ttm=15)
+                    st.session_state["dupire_svi_grid"] = (M_sv, T_sv, LV_sv)
+                else:
+                    st.warning(
+                        "SVI fitting found too few usable expiry slices for this snapshot "
+                        "— cubic-spline Dupire will be used as fallback."
+                    )
+            except Exception as e:
+                st.warning(f"SVI auto-build failed (cubic Dupire still available): {e}")
 
     vol_surf = st.session_state.get("vol_surf_obj", None)
 
@@ -745,44 +775,42 @@ with tab3:
             "Presentation at the Global Derivatives & Risk Management Conference, Madrid."
         )
 
-    # Build SVI button
-    svi_cache_key = f"svi_{params.get('snapshot_key', '')}_{params['S0']}_{params['r']}"
-    svi_built_key = st.session_state.get("svi_built_for", "")
-    svi_already_built = (svi_cache_key == svi_built_key) and vol_surf.svi_ready
+    # SVI is now auto-built in Tab 1 when "Build Vol Surface" is clicked.
+    # This expander provides a manual rebuild option for power users only.
+    _svi_key = (f"svi_{params.get('snapshot_key', '')}_{params['S0']}_{params['r']}")
+    _svi_already_built = (st.session_state.get("svi_built_for") == _svi_key) and vol_surf.svi_ready
 
-    run_svi = st.button(
-        "🔧 Build SVI Surface" if not svi_already_built else "🔄 Rebuild SVI Surface",
-        key="btn_svi",
-        type="primary",
-        help="Fits SVI to each expiry slice (~10 s)"
-    )
-
-    if run_svi:
-        with st.spinner("Fitting SVI parameters to each expiry slice…"):
-            try:
-                svi_result = vol_surf.build_svi_surface()
-                st.session_state["svi_built_for"] = svi_cache_key
-                if svi_result["svi_ready"]:
-                    st.success(
-                        f"✅ SVI surface built — {svi_result['n_slices_fitted']} expiry slices fitted. "
-                        f"Avg RMSE: {sum(svi_result['slice_rmse'].values())/max(len(svi_result['slice_rmse']), 1):.2f} vol pts."
-                    )
-                    # Auto-build and cache SVI Dupire grid so it survives page navigation
-                    M_sv, T_sv, LV_sv = vol_surf.svi_dupire_surface_grid(n_moneyness=25, n_ttm=15)
-                    st.session_state["dupire_svi_grid"] = (M_sv, T_sv, LV_sv)
-                    # Show per-slice RMSE
-                    if svi_result["slice_rmse"]:
-                        import pandas as pd
-                        rmse_df = pd.DataFrame(
-                            [{"TTM": k, "RMSE (vol pts)": f"{v:.3f}%"}
-                             for k, v in sorted(svi_result["slice_rmse"].items())]
+    with st.expander("🔄 Rebuild SVI surface (advanced)", expanded=False):
+        st.caption(
+            "SVI is built automatically in Tab 1 when you click **Build Vol Surface**. "
+            "Use this only to force a fresh re-fit (e.g. after changing smoothing params)."
+        )
+        if st.button("🔄 Rebuild SVI Surface", key="btn_svi_rebuild",
+                     help="Force re-fit of SVI per-slice (~10 s)"):
+            with st.spinner("Re-fitting SVI parameters to each expiry slice…"):
+                try:
+                    svi_result = vol_surf.build_svi_surface()
+                    st.session_state["svi_built_for"] = _svi_key
+                    if svi_result["svi_ready"]:
+                        M_sv, T_sv, LV_sv = vol_surf.svi_dupire_surface_grid(
+                            n_moneyness=25, n_ttm=15)
+                        st.session_state["dupire_svi_grid"] = (M_sv, T_sv, LV_sv)
+                        st.success(
+                            f"✅ SVI rebuilt — {svi_result['n_slices_fitted']} slices fitted. "
+                            f"Avg RMSE: "
+                            f"{sum(svi_result['slice_rmse'].values()) / max(len(svi_result['slice_rmse']), 1):.2f} vol pts."
                         )
-                        with st.expander("Per-slice SVI fit quality"):
+                        if svi_result["slice_rmse"]:
+                            import pandas as pd
+                            rmse_df = pd.DataFrame(
+                                [{"TTM": k, "RMSE (vol pts)": f"{v:.3f}%"}
+                                 for k, v in sorted(svi_result["slice_rmse"].items())]
+                            )
                             st.dataframe(rmse_df, use_container_width=True, hide_index=True)
-                else:
-                    st.warning("SVI surface build failed — not enough expiry slices with sufficient data.")
-            except Exception as e:
-                st.error(f"SVI build error: {e}")
+                    else:
+                        st.warning("SVI rebuild failed — not enough expiry slices.")
+                except Exception as e:
+                    st.error(f"SVI rebuild error: {e}")
 
     if vol_surf.svi_ready:
         # Use cached SVI Dupire from auto-build when SVI was fitted, or compute now
@@ -839,6 +867,7 @@ with tab3:
             st.error(f"SVI Dupire error: {e}")
     else:
         st.info(
-            "👆 Click **Build SVI Surface** to fit the parametric SVI model and generate "
-            "the smooth Dupire surface."
+            "ℹ️ SVI surface not yet built for this snapshot. "
+            "Click **📊 Build Vol Surface** in Tab 1 — SVI and all Dupire surfaces "
+            "are now built automatically in the same step."
         )

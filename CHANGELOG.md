@@ -4,6 +4,47 @@ All notable changes to the AutoCallable Analytics Platform are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 Versioning follows [Semantic Versioning](https://semver.org/): patch (0.0.X) for bug fixes, minor (0.X.0) for new features, major (X.0.0) for architecture changes.
 
+## [0.6.1] — 2026-06-10
+
+### Fixed
+
+- **`app/vol_surface.py` — Dupire local vol `dT` noise amplification**
+  Changed default `dT` from `0.01` (3.6 days) to `0.04` (~15 days) in all three Dupire
+  methods (`dupire_local_vol`, `dupire_local_vol_grid`, `svi_dupire_local_vol_grid`).
+  The time derivative `dCdT = (C(T+dT) - C(T)) / dT` amplified IV surface noise by
+  `1/dT = 100×` at the old value. The new value reduces this amplification 4× while
+  keeping the derivative accurate. Primary fix for jagged Dupire surfaces.
+
+- **`app/vol_surface.py` — SVI bivariate spline cross-tenor smoothing**
+  Changed `s=0.005` → `s=0.02` for the `RectBivariateSpline` fitted to the SVI-evaluated
+  IV grid in `build_svi_surface()`. SVI per-slice already handles strike-direction
+  smoothness; the higher `s` prevents residual slice-to-slice parameter jumps from
+  propagating into `d²C/dK²` via the bivariate spline.
+
+- **`app/vol_surface.py` — SVI per-slice cross-tenor consistency (warm-start)**
+  `_fit_svi_slice()` gains an optional `prev_params` argument. `build_svi_surface()`
+  now passes the previous slice's fitted parameters as an extra optimizer starting point,
+  nudging adjacent expiry slices toward consistent parameter values rather than landing
+  on distant local minima independently.
+
+### Changed
+
+- **`app/pages/01_Vol_Surface.py` — SVI auto-built with one click**
+  "Build Vol Surface" now runs two steps: (1) bicubic spline + cubic Dupire, then
+  (2) SVI + SVI Dupire. All three surfaces are ready after a single button click —
+  no separate "Build SVI Surface" step required. The `VolSurface` object stored in
+  session state retains `svi_ready=True` across page navigation (a `_surf_key` cache
+  check prevents the object from being recreated on every page visit, which previously
+  wiped the SVI state).
+
+- **`app/pages/01_Vol_Surface.py` — Tab 3 SVI button demoted to optional rebuild**
+  The primary "Build SVI Surface" button is removed. An "🔄 Rebuild SVI surface"
+  expander is available for power users who need to force a re-fit.
+
+- **`app/pages/01_Vol_Surface.py` — timing text updated**
+  "Build Vol Surface ~3 s" → "~15 s (spline + SVI + all Dupire surfaces auto-built in
+  one click)".
+
 ## [0.6.0] — 2026-06-10
 
 ### Added

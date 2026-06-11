@@ -87,6 +87,7 @@ def _fit_svi_slice(
     k_arr: np.ndarray,
     w_arr: np.ndarray,
     n_starts: int = 4,
+    prev_params: Optional[np.ndarray] = None,
 ) -> Optional[np.ndarray]:
     """
     Fit SVI parameters to a single expiry slice using scipy L-BFGS-B.
@@ -143,7 +144,14 @@ def _fit_svi_slice(
     best_params: Optional[np.ndarray] = None
     best_val: float = np.inf
 
-    for x0 in starting_points[:n_starts]:
+    # Prepend previous slice's params as a warm-start candidate — encourages
+    # smooth parameter evolution across consecutive tenors (prevents the
+    # optimizer from jumping to distant local minima for adjacent expiries).
+    candidates = starting_points[:n_starts]
+    if prev_params is not None:
+        candidates = [list(prev_params)] + candidates
+
+    for x0 in candidates:
         try:
             res = minimize(
                 objective, x0,
@@ -432,7 +440,7 @@ class VolSurface:
         moneyness: float,
         ttm: float,
         dK: float = 0.01,
-        dT: float = 0.01,
+        dT: float = 0.04,
     ) -> float:
         """
         Compute Dupire local vol σ_loc(K, T) using numerical differentiation.
@@ -513,7 +521,7 @@ class VolSurface:
         m_axis: np.ndarray,
         T_axis: np.ndarray,
         dK: float = 0.01,
-        dT: float = 0.01,
+        dT: float = 0.04,
     ) -> np.ndarray:
         """
         Compute Dupire local vol for an entire (moneyness × TTM) grid in one pass.
@@ -664,6 +672,7 @@ class VolSurface:
 
         svi_slices: dict = {}
         slice_rmse: dict = {}
+        prev_fitted: Optional[np.ndarray] = None  # warm-start for next slice
 
         for key, grp in calls_df.groupby(group_col):
             grp = grp.dropna(subset=["impliedVolatility", "ttm_years", "moneyness"])
@@ -689,7 +698,7 @@ class VolSurface:
             k_clean = k_arr[valid]
             w_clean = w_arr[valid]
 
-            fitted = _fit_svi_slice(k_clean, w_clean)
+            fitted = _fit_svi_slice(k_clean, w_clean, prev_params=prev_fitted)
             if fitted is None:
                 continue
 
@@ -701,6 +710,7 @@ class VolSurface:
 
             svi_slices[ttm] = fitted
             slice_rmse[round(ttm, 4)] = rmse_vp
+            prev_fitted = fitted  # seed next slice from this one
 
         self._svi_slices = svi_slices
 
@@ -741,14 +751,15 @@ class VolSurface:
         grid_ivs = np.clip(grid_ivs, 0.02, 1.0)
 
         # Fit bivariate spline to the SVI-smoothed grid.
-        # Use s=0.005 (same as the cubic spline) — SVI per-slice fits already
-        # denoise in the strike direction, but the cross-tenor interpolation
-        # still needs smoothing to avoid amplifying residual kinks in d²C/dK².
+        # s=0.02 (4× looser than the cubic spline's 0.005): SVI per-slice already
+        # handles strike-direction smoothness, so here we only need cross-tenor
+        # continuity. The larger s prevents residual slice-to-slice parameter
+        # jumps from propagating into d²C/dK² via the bivariate spline.
         try:
             ky = min(3, len(ttm_svi) - 1)
             self._svi_spline = RectBivariateSpline(
                 m_knots, ttm_svi, grid_ivs,
-                kx=3, ky=ky, s=0.005,
+                kx=3, ky=ky, s=0.02,
             )
             self._svi_ready = True
         except Exception:
@@ -810,7 +821,7 @@ class VolSurface:
         m_axis: np.ndarray,
         T_axis: np.ndarray,
         dK: float = 0.01,
-        dT: float = 0.01,
+        dT: float = 0.04,
     ) -> np.ndarray:
         """
         Compute the SVI-based Dupire local vol grid (vectorised).
