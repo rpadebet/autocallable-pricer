@@ -344,9 +344,6 @@ class MCSurvivalPricer:
                        + self.ac.coupon_per_period())
             payoff += L * (1.0 - p_j) * math.exp(-self.r * t_i) * call_pv
 
-            # Per-observation coupon for surviving (paid at this obs date)
-            payoff += L * p_j * self.ac.coupon_per_period() * math.exp(-self.r * t_i)
-
             if store and first_call_idx is None and (1.0 - p_j) > 0.3:
                 first_call_idx = i
 
@@ -361,6 +358,11 @@ class MCSurvivalPricer:
             # Knock-in: triggered if spot falls below protection barrier at any obs
             knocked_in |= s < ki_barrier
             L *= p_j
+
+            # Per-observation coupon for surviving (at obs date t_i).
+            # Check sampled spot against coupon barrier.
+            if s >= self.ac.coupon_barrier * self.S_ref:
+                payoff += L * self.ac.coupon_per_period() * math.exp(-self.r * t_i)
             if store and spots is not None:
                 spots.append(s)
 
@@ -503,10 +505,6 @@ class MCSurvivalPricer:
                        + self.ac.coupon_per_period())
             payoffs += active * L * (1.0 - p_j) * math.exp(-self.r * t_i) * call_pv
 
-            # Per-observation coupon for surviving paths (paid at obs date)
-            cpn_per_obs = self.ac.coupon_per_period()
-            payoffs += active * L * p_j * cpn_per_obs * math.exp(-self.r * t_i)
-
             # Deactivate paths with negligible survival weight
             still_active = active & (p_j >= 1e-10) & (L >= 1e-15)
 
@@ -520,6 +518,15 @@ class MCSurvivalPricer:
 
             L = np.where(still_active, L * p_j, L)
             active = still_active
+
+            # Per-observation coupon for surviving paths (at obs date t_i).
+            # Check sampled spot against coupon barrier (coupon_barrier may be
+            # below call_barrier — e.g. Phoenix 75% coupon vs 100% call).
+            cpn_barrier = self.ac.coupon_barrier * self.S_ref
+            cpn_mask = active & (s >= cpn_barrier)
+            if cpn_mask.any():
+                payoffs[cpn_mask] += (L[cpn_mask] * self.ac.coupon_per_period()
+                                      * math.exp(-self.r * t_i))
             t_prev = t_i
 
             if not active.any():
