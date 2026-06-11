@@ -300,8 +300,6 @@ class MCSurvivalPricer:
         s = float(self.S0)
         L = 1.0
         payoff = 0.0
-        knocked_in = False
-        ki_barrier = self.ac.protection_barrier * self.S_ref
         spots = [s] if store else None
         first_call_idx = None
         t_prev = 0.0
@@ -355,8 +353,6 @@ class MCSurvivalPricer:
 
             # --- Sample next spot from truncated distribution ---
             s = self._sample_below(s, p_j, dt, sigma_t)
-            # Knock-in: triggered if spot falls below protection barrier at any obs
-            knocked_in |= s < ki_barrier
             L *= p_j
 
             # Per-observation coupon for surviving (at obs date t_i).
@@ -371,7 +367,9 @@ class MCSurvivalPricer:
         # Terminal payoff for surviving weight
         if L > 1e-15:
             T = self.ac.maturity_years
-            if knocked_in:
+            # european_ki: knock-in observed at maturity only
+            ki = s < self.ac.protection_barrier * self.S_ref
+            if ki:
                 term_pv = (max(s / self.S_ref, self.ac.protection_floor)
                            * self.ac.notional * math.exp(-self.r * T))
             else:
@@ -466,10 +464,6 @@ class MCSurvivalPricer:
         payoffs = np.zeros(N)
         active = np.ones(N, dtype=bool)
 
-        # Knock-in tracking: triggered if spot ever falls below protection barrier
-        ki_barrier = self.ac.protection_barrier * self.S_ref
-        knocked_in = np.zeros(N, dtype=bool)
-
         # Heston/Bates variance state
         is_heston_bates = self.vol_model in ("heston", "bates")
         v_t = np.full(N, self.heston_params.get("v0", 0.04)) if is_heston_bates else None
@@ -513,8 +507,6 @@ class MCSurvivalPricer:
                 s_new = self._sample_below_vec(s[still_active], p_j[still_active],
                                                 dt, sigma_t[still_active])
                 s[still_active] = s_new
-                # Knock-in: triggered if spot falls below protection barrier
-                knocked_in |= still_active & (s < ki_barrier)
 
             L = np.where(still_active, L * p_j, L)
             active = still_active
@@ -535,7 +527,8 @@ class MCSurvivalPricer:
         # Terminal payoff for surviving paths
         if active.any():
             T = self.ac.maturity_years
-            ki = knocked_in[active]
+            # european_ki: knock-in observed at maturity only
+            ki = s[active] < self.ac.protection_barrier * self.S_ref
             cpn_cond = s[active] >= self.ac.coupon_barrier * self.S_ref
             cpn = np.where(cpn_cond, self.ac.coupon_per_period(), 0.0)
             term_pv = np.where(

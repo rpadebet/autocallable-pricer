@@ -396,7 +396,6 @@ class MCStandardPricer:
         called = np.zeros(n_paths, dtype=bool)
 
         ki_barrier = self.ac.protection_barrier * self.S_ref
-        knocked_in = np.zeros(n_paths, dtype=bool)
 
         stored_paths = [] if store_paths else None
         call_indices = [] if store_paths else None
@@ -404,9 +403,6 @@ class MCStandardPricer:
         for i, t_i in enumerate(self.obs_dates):
             S_i = S_paths[:, i]
             active = ~called
-
-            # Knock-in: triggered if spot ever falls below protection barrier
-            knocked_in |= (S_i < ki_barrier)
 
             barrier_i = self.ac.call_barrier_at_period(i) * self.S_ref
             triggered = active & (S_i >= barrier_i)
@@ -425,7 +421,8 @@ class MCStandardPricer:
         survived = ~called
         if survived.any():
             S_T = S_paths[survived, -1]
-            ki_surv = knocked_in[survived]
+            # european_ki: knock-in observed at maturity only (terminal spot)
+            ki_surv = S_T < self.ac.protection_barrier * self.S_ref
             T = self.ac.maturity_years
 
             coupon_mask = S_T >= self.ac.coupon_barrier * self.S_ref
