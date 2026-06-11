@@ -81,6 +81,53 @@ if ac is None:
 
 st.divider()
 
+# ── Vol Model Selection (FDM page) ─────────────────────────────────────────────
+# FDPricer supports flat and local vol only. Stochastic vol (Heston/Bates) is not
+# implemented for the PDE grid — it requires a 3D or dimension-reduction approach.
+# Radio buttons mirror the Pricer page so the user can compare FD grids under
+# flat vs Dupire local vol without touching the global sidebar setting.
+st.markdown("#### Volatility Model")
+_fdm_top_opts = ["Flat (Black-Scholes)", "Local Vol Surface"]
+_fdm_top_sel = st.radio(
+    "Vol Model",
+    options=_fdm_top_opts,
+    horizontal=True,
+    key="fdm_vol_top",
+    label_visibility="collapsed",
+)
+
+_fdm_dupire_type = "cubic"
+if _fdm_top_sel == "Local Vol Surface":
+    _fdm_vs_obj = st.session_state.get("vol_surf_obj")
+    _fdm_svi_avail = _fdm_vs_obj is not None and getattr(_fdm_vs_obj, "svi_ready", False)
+    if not _fdm_svi_avail and st.session_state.get("fdm_vol_local_sub") == "SVI (smooth)":
+        st.session_state["fdm_vol_local_sub"] = "Cubic-Spline"
+    _fdm_local_opts = ["Cubic-Spline", "SVI (smooth)"] if _fdm_svi_avail else ["Cubic-Spline"]
+    _fc1, _fc2 = st.columns([1, 3])
+    with _fc1:
+        _fdm_local_sel = st.radio(
+            "Dupire surface", options=_fdm_local_opts, horizontal=True, key="fdm_vol_local_sub",
+        )
+    _fdm_dupire_type = "svi" if "SVI" in _fdm_local_sel else "cubic"
+    with _fc2:
+        if not _fdm_svi_avail:
+            st.caption(
+                "SVI surface not built — click **Build Vol Surface** on the **Vol Surface** page "
+                "to enable the smooth SVI option."
+            )
+        elif _fdm_dupire_type == "svi":
+            st.caption("**SVI Dupire** — per-slice parametric fitting before differentiation "
+                       "produces a smoother local vol surface in the FD grid.")
+        else:
+            st.caption("**Cubic-Spline Dupire** — differentiates the bicubic IV spline "
+                       "directly; may be jagged in sparse maturity/strike regions.")
+    _fdm_vol_model = "local"
+else:
+    st.caption("Constant σ (Black-Scholes PDE). Set σ in **④ Model Parameters** in the sidebar.")
+    _fdm_vol_model = "flat"
+
+st.divider()
+
 # ── Controls ──────────────────────────────────────────────────────────────────
 c1, c2 = st.columns([1, 3])
 with c1:
@@ -106,20 +153,57 @@ st.caption(
 if run_fdm or "fdm_result" not in st.session_state or st.session_state.get("fdm_last_run_fp") != _cur_fp_fdm:
     with st.spinner("Running FD pricer with full grid return…"):
         try:
-            vol_model = params.get("vol_model", "flat")
+            from scipy.interpolate import RegularGridInterpolator as _RGI
             vol_surface = None
             local_vol_interp = None
 
-            if vol_model == "local":
+            if _fdm_vol_model == "local":
+                # Build a cache key that includes snapshot + params + dupire type so
+                # switching Cubic↔SVI invalidates the cached interpolator and rebuilds.
+                snap_key = params.get("snapshot_key", "")
+                _fdm_cache_key = (
+                    f"vs_{snap_key}_{params['S0']}_{params['r']}"
+                    f"_{params.get('q', 0.014)}_{_fdm_dupire_type}"
+                )
                 cached = st.session_state.get("vol_surface_cache")
-                if cached and cached.get("key", "").startswith("vs_"):
-                    vol_surface = cached.get("vs")
+                if cached and cached.get("key") == _fdm_cache_key:
+                    vol_surface = cached["vs"]
                     local_vol_interp = cached.get("local_vol_interp")
-                if vol_surface is None:
-                    snap_df = params["snapshot_df"]
-                    vol_surface = VolSurface(snap_df, S0=params["S0"], r=params["r"], q=params.get("q", 0.014))
 
-            fd_vol_model = vol_model if vol_model in ("flat", "local") else "flat"
+                if vol_surface is None:
+                    # Reuse VolSurface built on the Vol Surface page if available
+                    existing_vs = st.session_state.get("vol_surf_obj")
+                    if (
+                        existing_vs is not None
+                        and existing_vs.S0 == params["S0"]
+                        and existing_vs.r == params["r"]
+                    ):
+                        vol_surface = existing_vs
+                    else:
+                        snap_df = params["snapshot_df"]
+                        vol_surface = VolSurface(
+                            snap_df, S0=params["S0"], r=params["r"], q=params.get("q", 0.014)
+                        )
+
+                if local_vol_interp is None:
+                    # Build RegularGridInterpolator for local vol — shared with FDPricer
+                    _m_ax = np.linspace(0.40, 1.80, 40)
+                    _t_ax = np.linspace(0.01, ac.maturity_years + 0.05, 25)
+                    if _fdm_dupire_type == "svi" and getattr(vol_surface, "svi_ready", False):
+                        _LV = vol_surface.svi_dupire_local_vol_grid(_m_ax, _t_ax)
+                    else:
+                        _LV = vol_surface.dupire_local_vol_grid(_m_ax, _t_ax)
+                    local_vol_interp = _RGI(
+                        (_t_ax, _m_ax), _LV,
+                        method="linear", bounds_error=False, fill_value=None,
+                    )
+                    st.session_state["vol_surface_cache"] = {
+                        "key": _fdm_cache_key,
+                        "vs": vol_surface,
+                        "local_vol_interp": local_vol_interp,
+                    }
+
+            fd_vol_model = _fdm_vol_model
 
             pricer = FDPricer(
                 autocallable=ac,

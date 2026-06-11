@@ -4,6 +4,26 @@ All notable changes to the AutoCallable Analytics Platform are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 Versioning follows [Semantic Versioning](https://semver.org/): patch (0.0.X) for bug fixes, minor (0.X.0) for new features, major (X.0.0) for architecture changes.
 
+## [0.6.8] — 2026-06-11
+
+### Added
+
+- **`app/pages/03_FDM_Visualization.py` — vol model selector on FDM page**
+  Added `#### Volatility Model` radio buttons at the top of the FDM Visualization
+  page, mirroring the selector on the Pricer page. Users can now choose:
+  - **Flat (Black-Scholes)** — constant σ, heat-equation FD (same as before)
+  - **Local Vol Surface** — Dupire Σ(S,t) from the market, with Cubic-Spline or
+    SVI sub-option (SVI enabled when the surface is built on the Vol Surface page)
+
+  The selection is page-local (session keys `fdm_vol_top` / `fdm_vol_local_sub`)
+  and independent of the global sidebar vol model, so switching between Flat and
+  Local Vol on this page doesn't affect the Pricer or other pages.
+
+  The local vol path builds a `RegularGridInterpolator` over a 40×25 (moneyness×ttm)
+  grid and caches it keyed by snapshot + params + dupire type — hitting SVI↔Cubic
+  or snapshot changes invalidates the cache and rebuilds. FDPricer's existing
+  `_price_local_vol()` method handles the rest unchanged.
+
 ## [0.6.7] — 2026-06-11
 
 ### Fixed
