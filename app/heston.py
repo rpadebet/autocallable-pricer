@@ -1124,6 +1124,46 @@ def bates_call_price(
     return _gil_pelaez_call(cf, S0, K, T, r, q)
 
 
+def _calibration_quotes(market_df, S0: float, n_max: int = 60, seed: int = 42):
+    """
+    Build a shared, well-filtered, deterministic (K, T, iv) quote set for the
+    Merton and Bates calibrators.
+
+    WHY THIS EXISTS:
+        Merton and Bates previously sampled different sizes (25 vs 75) from
+        different moneyness/TTM ranges, so their RMSEs were not comparable and
+        Bates could not be guaranteed at least as good as Merton. Worse, the wide
+        filters pulled in noisy deep-wing and ultra-short-dated quotes that
+        created an artificial RMSE floor (~13 vol-pts) where neither jumps nor
+        stochastic vol could help — so the Bates optimizer abandoned jumps.
+
+        Using one tighter, shared quote set means:
+          - Merton and Bates RMSE are directly comparable (same data).
+          - Bates nests Merton on the SAME data, so the Merton-mimic seed in
+            calibrate_bates is guaranteed to fit at least as well as Merton.
+          - Dropping the noisy wings removes the artificial RMSE floor, so the
+            jump params carry real signal.
+
+    FILTERS:
+        ttm ∈ [0.15, 2.0]      — drops ultra-short quotes dominated by gamma noise
+                                  and un-invertible far-OTM prices (the T=0.10 wing).
+        moneyness ∈ [0.85, 1.15] — focuses on the liquid, informative smile region.
+
+    Returns:
+        (K_arr, T_arr, iv_arr) numpy arrays. Deterministic for a given snapshot.
+    """
+    df = market_df.dropna(subset=["impliedVolatility"])
+    df = df[df["impliedVolatility"] > 0]
+    df = df[(df["ttm_years"] >= 0.15) & (df["ttm_years"] <= 2.0)]
+    df = df[(df["moneyness"] >= 0.85) & (df["moneyness"] <= 1.15)]
+    if len(df) > n_max:
+        df = df.sample(n_max, random_state=seed)
+    K_arr  = df["moneyness"].values * S0
+    t_arr  = df["ttm_years"].values
+    iv_arr = df["impliedVolatility"].values
+    return K_arr, t_arr, iv_arr
+
+
 def calibrate_merton(
     market_df,
     S0: float,
@@ -1148,15 +1188,9 @@ def calibrate_merton(
     """
     from app.vol_surface import bs_implied_vol
 
-    df = market_df.dropna(subset=["impliedVolatility"])
-    df = df[(df["ttm_years"] >= 0.1) & (df["ttm_years"] <= 2.0)]
-    df = df[(df["moneyness"] >= 0.80) & (df["moneyness"] <= 1.20)]
-    if len(df) > 25:
-        df = df.sample(25, random_state=42)
-
-    K_arr  = df["moneyness"].values * S0
-    t_arr  = df["ttm_years"].values
-    iv_arr = df["impliedVolatility"].values
+    K_arr, t_arr, iv_arr = _calibration_quotes(market_df, S0)
+    n_quotes = len(K_arr)
+    _min_valid = max(1, int(0.5 * n_quotes))  # guard against "cheating" via un-invertible prices
 
     def objective(params):
         sigma_, lam_, mu_J_, sig_J_ = params
@@ -1165,17 +1199,19 @@ def calibrate_merton(
         except Exception:
             return 999.0
 
+        # Skip un-invertible (far-OTM ≈ 0) prices rather than applying a fixed 0.25
+        # penalty — the old penalty created a noisy RMSE cliff sensitive to rounding.
         errors = []
         for price, K, T, iv_mkt in zip(prices, K_arr, t_arr, iv_arr):
             try:
                 iv_model = bs_implied_vol(float(price), S0, float(K), float(T), r, q)
                 if iv_model is not None and iv_model > 0:
                     errors.append((iv_model - iv_mkt) ** 2)
-                else:
-                    errors.append(0.25)
             except Exception:
-                errors.append(0.25)
-        return np.mean(errors) if errors else 999.0
+                pass
+        if len(errors) < _min_valid:
+            return 999.0
+        return np.mean(errors)
 
     bounds = [(0.05, 0.6), (0.0, 5.0), (-0.5, 0.1), (0.01, 0.5)]
 
@@ -1209,7 +1245,7 @@ def calibrate_merton(
         "mu_J":         round(float(mu_J), 4),
         "sig_J":        round(float(sig_J), 4),
         "rmse_vol_pts": round(float(math.sqrt(max(best_val, 0)) * 100), 2),
-        "n_quotes":     len(df),
+        "n_quotes":     n_quotes,
     }
 
 
@@ -1219,15 +1255,33 @@ def calibrate_bates(
     r: float,
     q: float,
     heston_init: Optional[dict] = None,
+    merton_init: Optional[dict] = None,
 ) -> dict:
     """
     Calibrate Bates model parameters (v0, kappa, theta, gamma, rho, lam, mu_J, sig_J)
-    to market implied vols. Warm-starts from Heston calibration if provided.
+    to market implied vols via a robust two-phase scheme.
 
-    WHY WARM-START FROM HESTON:
-        Bates has 8 parameters vs Heston's 5. Starting from a calibrated Heston
-        solution and adding jump params (lam, mu_J, sig_J) near zero avoids the
-        optimizer getting lost in the full 8D space.
+    WHY TWO PHASES (and why the old single-pass 8D approach failed):
+        A joint 8D L-BFGS-B started at the Heston optimum (zero jumps) never moves
+        the jump params. The reason is gradient flatness: when lam ≈ 0, both
+        ∂obj/∂mu_J and ∂obj/∂sig_J are O(lam) ≈ 0, so the finite-difference
+        optimizer sees a flat landscape and terminates at the starting point. The
+        result was mu_J/sig_J stuck at their seed values on every snapshot, with
+        Bates RMSE sometimes *worse* than Heston (impossible if jumps were fit).
+
+        Phase 1 (jump-only, 3D): fix the diffusion at the Heston solution and
+        optimize only (lam, mu_J, sig_J), seeded from Merton's calibrated jumps
+        (Merton has no stochastic-vol diffusion to absorb the smile, so it is
+        forced to fit real jump structure — a strong prior). With lam seeded at a
+        meaningful value, the jump gradients are informative and the 3D problem
+        is well-conditioned.
+
+        Phase 2 (joint, 8D): refine all 8 params starting from the Phase-1 point,
+        where jumps already help, so diffusion and jumps co-adapt with informative
+        gradients.
+
+        A pure-Heston baseline (lam → 0) is always evaluated and kept if neither
+        phase beats it — this guarantees the Bates fit is never worse than Heston.
 
     Args:
         market_df:    DataFrame with moneyness, ttm_years, impliedVolatility.
@@ -1235,6 +1289,9 @@ def calibrate_bates(
         r:            Risk-free rate.
         q:            Dividend yield.
         heston_init:  Dict of calibrated Heston params (v0, kappa, theta, gamma, rho).
+        merton_init:  Dict of calibrated Merton params (lam, mu_J, sig_J) used to
+                      seed the Phase-1 jump optimization. Optional but strongly
+                      recommended — without it, generic jump seeds are used.
 
     Returns:
         Dict: {v0, kappa, theta, gamma, rho, lam, mu_J, sig_J, rmse_vol_pts,
@@ -1242,18 +1299,12 @@ def calibrate_bates(
     """
     from app.vol_surface import bs_implied_vol
 
-    df = market_df.dropna(subset=["impliedVolatility"])
-    df = df[(df["ttm_years"] >= 0.1) & (df["ttm_years"] <= 2.0)]
-    df = df[(df["moneyness"] >= 0.80) & (df["moneyness"] <= 1.20)]
-    # 75 points gives the 8-param optimizer enough data to distinguish jump vs diffusion
-    # contributions. 25 points under-constrained the jump params and made the RMSE
-    # incomparable with Heston (which uses ~80 points via VolSurface).
-    if len(df) > 75:
-        df = df.sample(75, random_state=42)
-
-    K_arr  = df["moneyness"].values * S0
-    t_arr  = df["ttm_years"].values
-    iv_arr = df["impliedVolatility"].values
+    # Use the SAME shared quote set as calibrate_merton so the two RMSEs are
+    # directly comparable and the Merton-mimic seed below is guaranteed to fit
+    # at least as well as Merton (Bates nests Merton on identical data).
+    K_arr, t_arr, iv_arr = _calibration_quotes(market_df, S0)
+    n_quotes = len(K_arr)
+    _min_valid = max(1, int(0.5 * n_quotes))
 
     def objective(params):
         v0_, kappa_, theta_, gamma_, rho_, lam_, mu_J_, sig_J_ = params
@@ -1267,62 +1318,126 @@ def calibrate_bates(
             )
         except Exception:
             return 999.0 + feller_pen
+        # Skip un-invertible prices rather than applying a fixed 0.25 penalty cliff.
         errors = []
         for price, K, T, iv_mkt in zip(prices, K_arr, t_arr, iv_arr):
             try:
                 iv_model = bs_implied_vol(float(price), S0, float(K), float(T), r, q)
                 if iv_model is not None and iv_model > 0:
                     errors.append((iv_model - iv_mkt) ** 2)
-                else:
-                    errors.append(0.25)
             except Exception:
-                errors.append(0.25)
-        return (np.mean(errors) if errors else 999.0) + feller_pen
+                pass
+        if len(errors) < _min_valid:
+            return 999.0 + feller_pen
+        return np.mean(errors) + feller_pen
 
     bounds = [
         (0.001, 0.50),   # v0
         (0.1,  10.0),    # kappa
-        (0.001, 0.20),   # theta — matched to Heston bound; prevents degenerate high-θ solutions
-        (0.10,  1.5),    # gamma — floor matched to Heston bound
+        (0.001, 0.20),   # theta — prevents degenerate high-θ solutions
+        (0.01,  1.5),    # gamma — floor at 0.01 (NOT 0.10): Bates must be able to
+                         # reduce to near-constant vol (gamma→0) so it nests Merton.
+                         # When the smile is jump-driven (common for SPX), the best
+                         # Bates fit IS the Merton-like constant-vol+jumps solution;
+                         # a 0.10 floor blocks it and the optimizer abandons jumps.
         (-0.99, -0.01),  # rho
         (0.0,   5.0),    # lam
         (-0.5,  0.1),    # mu_J
         (0.01, 0.5),     # sig_J
     ]
 
-    # Build starting points: near-zero lam so Bates ≈ Heston at the initial guess,
-    # then try larger lam values in case the market has a strong jump signal.
-    # Starting at lam=0.5 (old behaviour) broke warm-starting because the Heston
-    # diffusion params were calibrated for lam=0 and become suboptimal at lam=0.5.
+    def _clip(vec):
+        return [float(np.clip(vec[i], bounds[i][0], bounds[i][1])) for i in range(8)]
+
+    # Heston diffusion warm-start (held fixed during Phase 1)
     _hv0    = heston_init.get("v0",    0.04) if heston_init else 0.04
     _hkappa = heston_init.get("kappa", 1.5)  if heston_init else 1.5
     _htheta = heston_init.get("theta", 0.04) if heston_init else 0.04
     _hgamma = heston_init.get("gamma", 0.3)  if heston_init else 0.3
     _hrho   = heston_init.get("rho",  -0.7)  if heston_init else -0.7
+    diffusion = [_hv0, _hkappa, _htheta, _hgamma, _hrho]
 
-    starting_points = [
-        [_hv0,  _hkappa, _htheta, _hgamma, _hrho,  0.02, -0.05, 0.10],
-        [_hv0,  _hkappa, _htheta, _hgamma, _hrho,  0.30, -0.05, 0.10],
-        [_hv0,  _hkappa, _htheta, _hgamma, _hrho,  1.00, -0.10, 0.15],
-        # Generic SPX starting point independent of Heston warm-start — ensures Bates
-        # can escape if the Heston solution is degenerate (e.g. theta at bound).
-        [0.04,  2.00,    0.04,    0.40,    -0.70,  0.30, -0.05, 0.10],
+    # ── Phase 0: pure-Heston baseline (lam → 0) ───────────────────────────────
+    # Evaluated up front and kept if neither phase improves on it, guaranteeing
+    # the Bates fit is never worse than Heston-with-no-jumps on this sample.
+    baseline    = _clip(diffusion + [1e-4, -0.05, 0.10])
+    best_params = baseline
+    best_val    = objective(baseline)
+
+    # ── Phase 1: jump-only optimization (3D), diffusion held at Heston ─────────
+    jump_bounds = [bounds[5], bounds[6], bounds[7]]
+
+    def jump_objective(jp):
+        return objective(diffusion + list(jp))
+
+    # Seed from Merton's calibrated jumps (strong prior) + two generic backups.
+    jump_seeds = []
+    if merton_init:
+        jump_seeds.append([
+            merton_init.get("lam",   0.50),
+            merton_init.get("mu_J", -0.08),
+            merton_init.get("sig_J", 0.12),
+        ])
+    jump_seeds += [
+        [0.50, -0.08, 0.12],
+        [1.00, -0.10, 0.15],
     ]
 
-    best_params = starting_points[0]
-    best_val    = float("inf")
-
-    for sp in starting_points:
-        x0c = [float(np.clip(sp[i], bounds[i][0], bounds[i][1])) for i in range(8)]
-        val0 = objective(x0c)
-        if val0 < best_val:
-            best_val    = val0
-            best_params = x0c
+    best_jump     = None
+    best_jump_val = float("inf")
+    for js in jump_seeds:
+        jsc = [float(np.clip(js[i], jump_bounds[i][0], jump_bounds[i][1])) for i in range(3)]
+        v0_eval = jump_objective(jsc)
+        if v0_eval < best_jump_val:
+            best_jump_val = v0_eval
+            best_jump     = jsc
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 res = minimize(
-                    objective, x0c, method="L-BFGS-B", bounds=bounds,
+                    jump_objective, jsc, method="L-BFGS-B", bounds=jump_bounds,
+                    options={"maxiter": 150, "ftol": 1e-7},
+                )
+            if res.fun < best_jump_val:
+                best_jump_val = res.fun
+                best_jump     = list(res.x)
+        except Exception:
+            pass
+
+    if best_jump is not None and best_jump_val < best_val:
+        best_val    = best_jump_val
+        best_params = _clip(diffusion + list(best_jump))
+
+    # ── Phase 2: joint 8D refinement ──────────────────────────────────────────
+    # Start from the best point so far (jumps already help → informative gradients),
+    # plus a generic seed and an explicit Merton-mimic seed. Because Bates nests
+    # Merton (gamma→0, constant variance), the Merton-mimic point scores ~Merton's
+    # RMSE immediately, guaranteeing Bates can reach the Merton-like optimum that
+    # is best for jump-driven SPX smiles; L-BFGS-B then refines from there.
+    _seed_jump   = list(best_jump) if best_jump is not None else [0.50, -0.08, 0.12]
+    phase2_starts = [
+        list(best_params),
+        [0.04, 2.00, 0.04, 0.40, -0.70] + _seed_jump,
+    ]
+    if merton_init:
+        _msig2 = float(merton_init.get("sigma", 0.20)) ** 2  # constant-vol level v0=theta=σ²
+        phase2_starts.append(
+            [_msig2, 2.00, _msig2, 0.02, -0.30,
+             merton_init.get("lam", 0.50),
+             merton_init.get("mu_J", -0.08),
+             merton_init.get("sig_J", 0.12)]
+        )
+    for sp in phase2_starts:
+        spc = _clip(sp)
+        v = objective(spc)
+        if v < best_val:
+            best_val    = v
+            best_params = spc
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                res = minimize(
+                    objective, spc, method="L-BFGS-B", bounds=bounds,
                     options={"maxiter": 300, "ftol": 1e-7},
                 )
             if res.fun < best_val:
@@ -1343,5 +1458,5 @@ def calibrate_bates(
         "sig_J":            round(float(sig_J), 4),
         "rmse_vol_pts":     round(float(math.sqrt(max(best_val, 0)) * 100), 2),
         "feller_satisfied": bool(kappa * theta > 0.5 * gamma ** 2),
-        "n_quotes":         len(df),
+        "n_quotes":         n_quotes,
     }

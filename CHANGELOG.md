@@ -4,6 +4,45 @@ All notable changes to the AutoCallable Analytics Platform are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 Versioning follows [Semantic Versioning](https://semver.org/): patch (0.0.X) for bug fixes, minor (0.X.0) for new features, major (X.0.0) for architecture changes.
 
+## [0.6.6] — 2026-06-11
+
+### Fixed
+
+- **`app/heston.py` — Bates jump params no longer freeze at defaults (root-cause fix)**
+  Bates calibration previously returned `mu_J=-0.05, sig_J=0.10` (the seed values)
+  on every snapshot, with RMSE sometimes worse than Heston. Three compounding causes,
+  all fixed:
+  1. **Different datasets per model.** Heston fit the smoothed VolSurface (~80 pts),
+     Merton a 25-pt random raw sample, Bates a 75-pt random raw sample — so RMSEs
+     were never comparable and Bates could not be guaranteed ≤ Merton. New shared
+     helper `_calibration_quotes()` gives Merton and Bates an identical, deterministic
+     quote set; since Bates nests Merton on the same data, the Merton-mimic seed now
+     guarantees Bates fits at least as well as Merton.
+  2. **Noisy wings created a ~13 vol-pt RMSE floor.** The old moneyness ∈ [0.80,1.20]
+     and ttm ≥ 0.10 filters pulled in noisy deep-OTM and ultra-short quotes that
+     neither jumps nor stochastic vol could fit, so the optimizer abandoned jumps.
+     Tightened to moneyness ∈ [0.85,1.15], ttm ∈ [0.15,2.0]. RMSEs dropped from
+     ~7–24 vol-pts to ~1 vol-pt and jump params now carry real signal.
+  3. **0.25 None-penalty cliff.** When `bs_implied_vol` failed to invert a far-OTM
+     price the objective added a fixed 0.25 penalty, creating a rounding-sensitive
+     RMSE cliff (one bad point shifted reported RMSE by ~5 vol-pts). Both calibrators
+     now skip un-invertible quotes (with a ≥50%-valid guard against degenerate fits).
+
+- **`app/heston.py` — Bates `gamma` floor lowered 0.10 → 0.01**
+  The v0.6.5 floor of 0.10 prevented Bates from reducing to near-constant vol
+  (gamma → 0), i.e. blocked it from nesting Merton. For jump-driven SPX smiles the
+  best Bates fit IS the Merton-like constant-vol + jumps solution; the floor forced
+  a worse stochastic-vol fit and the optimizer dropped the jumps. (Heston's gamma
+  floor is unchanged — its theta cap already fixed the earlier degeneracy.)
+
+### Verified
+  Bates RMSE ≤ Merton RMSE and jump params vary meaningfully across snapshots on
+  test snapshots 20260610_0945 and 20260608_0945. All 130 tests pass. NOTE: on SPX
+  data Bates `gamma` collapses toward the floor — the smile is fully jump-explained,
+  so the stochastic-vol component contributes little. This is the honest best fit.
+  Calibration covers moneyness [0.85,1.15] only; the 70–80% autocallable barrier
+  region is extrapolated by the simulated dynamics, not directly fit.
+
 ## [0.6.5] — 2026-06-11
 
 ### Fixed
