@@ -71,9 +71,10 @@ def _calibrate_snapshot(snap_df, S0: float, r: float, q: float) -> dict:
         print(f"    Merton  FAILED: {e}")
         m = {}
 
-    # Step 3: Bates (warm-started from Heston diffusion params)
+    # Step 3: Bates (warm-started from Heston diffusion + Merton jump params)
     t3 = time.time()
-    b  = calibrate_bates(mkt_calls, S0=S0, r=r, q=q, heston_init=h)
+    b  = calibrate_bates(mkt_calls, S0=S0, r=r, q=q, heston_init=h,
+                         merton_init=(m if m else None))
     print(
         f"    Bates   {time.time()-t3:5.0f}s  "
         f"RMSE={b['rmse_vol_pts']:.2f}vol-pts  "

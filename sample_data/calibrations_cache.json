@@ -12,25 +12,25 @@
       "n_quotes": 25
     },
     "merton": {
-      "sigma": 0.1108,
-      "lam": 1.0016,
-      "mu_J": -0.0872,
-      "sig_J": 0.1648,
-      "rmse_vol_pts": 7.15,
-      "n_quotes": 25
+      "sigma": 0.05,
+      "lam": 1.1479,
+      "mu_J": -0.2132,
+      "sig_J": 0.01,
+      "rmse_vol_pts": 4.38,
+      "n_quotes": 60
     },
     "bates": {
-      "v0": 0.047235,
-      "kappa": 2.0,
-      "theta": 0.04,
-      "gamma": 0.4,
-      "rho": -0.7,
-      "lam": 0.3,
+      "v0": 0.035961,
+      "kappa": 3.0,
+      "theta": 0.03,
+      "gamma": 0.3,
+      "rho": -0.8,
+      "lam": 0.0001,
       "mu_J": -0.05,
       "sig_J": 0.1,
-      "rmse_vol_pts": 9.13,
+      "rmse_vol_pts": 5.18,
       "feller_satisfied": true,
-      "n_quotes": 75
+      "n_quotes": 60
     }
   },
   "20260608_0945": {
@@ -46,25 +46,25 @@
       "n_quotes": 25
     },
     "merton": {
-      "sigma": 0.2438,
-      "lam": 0.9997,
-      "mu_J": -0.0991,
-      "sig_J": 0.1474,
-      "rmse_vol_pts": 14.29,
-      "n_quotes": 25
+      "sigma": 0.0793,
+      "lam": 0.5654,
+      "mu_J": -0.2515,
+      "sig_J": 0.291,
+      "rmse_vol_pts": 0.97,
+      "n_quotes": 60
     },
     "bates": {
-      "v0": 0.050372,
+      "v0": 0.044533,
       "kappa": 2.0,
-      "theta": 0.04,
-      "gamma": 0.4,
-      "rho": -0.7,
-      "lam": 0.3,
-      "mu_J": -0.05,
-      "sig_J": 0.1,
-      "rmse_vol_pts": 15.96,
+      "theta": 0.006288,
+      "gamma": 0.02,
+      "rho": -0.3,
+      "lam": 0.5654,
+      "mu_J": -0.2515,
+      "sig_J": 0.291,
+      "rmse_vol_pts": 4.38,
       "feller_satisfied": true,
-      "n_quotes": 75
+      "n_quotes": 60
     }
   },
   "20260608_1200": {
@@ -80,25 +80,25 @@
       "n_quotes": 25
     },
     "merton": {
-      "sigma": 0.2062,
-      "lam": 0.9985,
-      "mu_J": -0.094,
-      "sig_J": 0.1381,
-      "rmse_vol_pts": 11.93,
-      "n_quotes": 25
+      "sigma": 0.0994,
+      "lam": 0.3347,
+      "mu_J": -0.3518,
+      "sig_J": 0.383,
+      "rmse_vol_pts": 0.74,
+      "n_quotes": 60
     },
     "bates": {
-      "v0": 0.04425,
+      "v0": 0.042207,
       "kappa": 2.0,
       "theta": 0.04,
       "gamma": 0.4,
       "rho": -0.7,
-      "lam": 0.3,
-      "mu_J": -0.05,
-      "sig_J": 0.1,
-      "rmse_vol_pts": 12.67,
+      "lam": 0.3347,
+      "mu_J": -0.3518,
+      "sig_J": 0.383,
+      "rmse_vol_pts": 4.77,
       "feller_satisfied": true,
-      "n_quotes": 75
+      "n_quotes": 60
     }
   },
   "20260608_1545": {
@@ -114,25 +114,25 @@
       "n_quotes": 25
     },
     "merton": {
-      "sigma": 0.2388,
-      "lam": 0.9996,
-      "mu_J": -0.0989,
-      "sig_J": 0.1462,
-      "rmse_vol_pts": 17.02,
-      "n_quotes": 25
+      "sigma": 0.0972,
+      "lam": 0.3373,
+      "mu_J": -0.4089,
+      "sig_J": 0.3709,
+      "rmse_vol_pts": 0.74,
+      "n_quotes": 60
     },
     "bates": {
-      "v0": 0.074042,
-      "kappa": 3.0,
-      "theta": 0.03,
-      "gamma": 0.3,
-      "rho": -0.8,
-      "lam": 0.02,
-      "mu_J": -0.05,
-      "sig_J": 0.1,
-      "rmse_vol_pts": 11.98,
+      "v0": 0.044701,
+      "kappa": 2.0,
+      "theta": 0.009448,
+      "gamma": 0.02,
+      "rho": -0.3,
+      "lam": 0.3373,
+      "mu_J": -0.4089,
+      "sig_J": 0.3709,
+      "rmse_vol_pts": 4.64,
       "feller_satisfied": true,
-      "n_quotes": 75
+      "n_quotes": 60
     }
   },
   "20260609_0945": {
@@ -148,25 +148,25 @@
       "n_quotes": 25
     },
     "merton": {
-      "sigma": 0.0611,
-      "lam": 0.5104,
-      "mu_J": -0.3335,
-      "sig_J": 0.01,
-      "rmse_vol_pts": 10.65,
-      "n_quotes": 25
+      "sigma": 0.0959,
+      "lam": 0.3412,
+      "mu_J": -0.3906,
+      "sig_J": 0.3471,
+      "rmse_vol_pts": 0.6,
+      "n_quotes": 60
     },
     "bates": {
-      "v0": 0.056401,
+      "v0": 0.040741,
       "kappa": 2.0,
       "theta": 0.04,
       "gamma": 0.4,
       "rho": -0.7,
-      "lam": 0.02,
-      "mu_J": -0.05,
-      "sig_J": 0.1,
-      "rmse_vol_pts": 12.93,
+      "lam": 0.3412,
+      "mu_J": -0.3906,
+      "sig_J": 0.3471,
+      "rmse_vol_pts": 3.96,
       "feller_satisfied": true,
-      "n_quotes": 75
+      "n_quotes": 60
     }
   },
   "20260609_1200": {
@@ -182,25 +182,25 @@
       "n_quotes": 25
     },
     "merton": {
-      "sigma": 0.2143,
-      "lam": 0.9992,
-      "mu_J": -0.0993,
-      "sig_J": 0.1539,
-      "rmse_vol_pts": 16.88,
-      "n_quotes": 25
+      "sigma": 0.0869,
+      "lam": 0.4049,
+      "mu_J": -0.3822,
+      "sig_J": 0.3582,
+      "rmse_vol_pts": 1.98,
+      "n_quotes": 60
     },
     "bates": {
-      "v0": 0.064056,
-      "kappa": 3.0,
-      "theta": 0.03,
-      "gamma": 0.3,
-      "rho": -0.8,
-      "lam": 0.02,
-      "mu_J": -0.05,
-      "sig_J": 0.1,
-      "rmse_vol_pts": 17.67,
+      "v0": 0.045318,
+      "kappa": 2.0,
+      "theta": 0.04,
+      "gamma": 0.4,
+      "rho": -0.7,
+      "lam": 0.4049,
+      "mu_J": -0.3822,
+      "sig_J": 0.3582,
+      "rmse_vol_pts": 5.82,
       "feller_satisfied": true,
-      "n_quotes": 75
+      "n_quotes": 60
     }
   },
   "20260609_1545": {
@@ -216,25 +216,25 @@
       "n_quotes": 25
     },
     "merton": {
-      "sigma": 0.2468,
-      "lam": 0.3028,
-      "mu_J": -0.0381,
-      "sig_J": 0.0984,
-      "rmse_vol_pts": 6.62,
-      "n_quotes": 25
+      "sigma": 0.0857,
+      "lam": 0.4538,
+      "mu_J": -0.3615,
+      "sig_J": 0.3172,
+      "rmse_vol_pts": 0.95,
+      "n_quotes": 60
     },
     "bates": {
-      "v0": 0.072659,
+      "v0": 0.046636,
       "kappa": 3.0,
       "theta": 0.03,
       "gamma": 0.3,
       "rho": -0.8,
-      "lam": 0.02,
+      "lam": 0.0001,
       "mu_J": -0.05,
       "sig_J": 0.1,
-      "rmse_vol_pts": 14.83,
+      "rmse_vol_pts": 4.91,
       "feller_satisfied": true,
-      "n_quotes": 75
+      "n_quotes": 60
     }
   },
   "20260610_0945": {
@@ -250,25 +250,25 @@
       "n_quotes": 25
     },
     "merton": {
-      "sigma": 0.2363,
-      "lam": 0.3029,
-      "mu_J": -0.0372,
-      "sig_J": 0.1056,
-      "rmse_vol_pts": 6.44,
-      "n_quotes": 25
+      "sigma": 0.0827,
+      "lam": 0.4746,
+      "mu_J": -0.2871,
+      "sig_J": 0.3467,
+      "rmse_vol_pts": 1.06,
+      "n_quotes": 60
     },
     "bates": {
-      "v0": 0.067511,
-      "kappa": 3.0,
-      "theta": 0.03,
-      "gamma": 0.3,
-      "rho": -0.8,
-      "lam": 0.02,
-      "mu_J": -0.05,
-      "sig_J": 0.1,
-      "rmse_vol_pts": 11.4,
+      "v0": 0.045819,
+      "kappa": 2.0,
+      "theta": 0.04,
+      "gamma": 0.4,
+      "rho": -0.7,
+      "lam": 0.4746,
+      "mu_J": -0.2871,
+      "sig_J": 0.3467,
+      "rmse_vol_pts": 4.45,
       "feller_satisfied": true,
-      "n_quotes": 75
+      "n_quotes": 60
     }
   },
   "20260610_1200": {
@@ -284,25 +284,25 @@
       "n_quotes": 25
     },
     "merton": {
-      "sigma": 0.2211,
-      "lam": 0.9992,
-      "mu_J": -0.0988,
-      "sig_J": 0.1436,
-      "rmse_vol_pts": 16.05,
-      "n_quotes": 25
+      "sigma": 0.0851,
+      "lam": 0.3609,
+      "mu_J": -0.4553,
+      "sig_J": 0.3991,
+      "rmse_vol_pts": 1.77,
+      "n_quotes": 60
     },
     "bates": {
-      "v0": 0.058208,
+      "v0": 0.048848,
       "kappa": 1.5,
       "theta": 0.04,
       "gamma": 0.3,
       "rho": -0.7,
-      "lam": 0.02,
+      "lam": 0.0001,
       "mu_J": -0.05,
       "sig_J": 0.1,
-      "rmse_vol_pts": 19.1,
+      "rmse_vol_pts": 5.71,
       "feller_satisfied": true,
-      "n_quotes": 75
+      "n_quotes": 60
     }
   },
   "20260610_1545": {
@@ -318,25 +318,25 @@
       "n_quotes": 25
     },
     "merton": {
-      "sigma": 0.2446,
-      "lam": 0.9998,
-      "mu_J": -0.0995,
-      "sig_J": 0.1482,
-      "rmse_vol_pts": 16.86,
-      "n_quotes": 25
+      "sigma": 0.0836,
+      "lam": 0.4489,
+      "mu_J": -0.4188,
+      "sig_J": 0.3465,
+      "rmse_vol_pts": 2.28,
+      "n_quotes": 60
     },
     "bates": {
-      "v0": 0.074139,
+      "v0": 0.053825,
       "kappa": 3.0,
       "theta": 0.03,
       "gamma": 0.3,
       "rho": -0.8,
-      "lam": 0.02,
+      "lam": 0.0001,
       "mu_J": -0.05,
       "sig_J": 0.1,
-      "rmse_vol_pts": 16.95,
+      "rmse_vol_pts": 6.26,
       "feller_satisfied": true,
-      "n_quotes": 75
+      "n_quotes": 60
     }
   }
 }
