@@ -4,6 +4,27 @@ All notable changes to the AutoCallable Analytics Platform are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 Versioning follows [Semantic Versioning](https://semver.org/): patch (0.0.X) for bug fixes, minor (0.X.0) for new features, major (X.0.0) for architecture changes.
 
+## [0.6.7] — 2026-06-11
+
+### Fixed
+
+- **`app/heston.py` — numpy 2.4+ `np.trapz` removal silently broke Heston/Bates pricing**
+  The fast Fourier pricers `_heston_call_batch_fast` and `_bates_call_batch_fast`
+  integrated with `np.trapz`, which numpy deprecated in 2.0 and **removed in 2.4**.
+  On numpy ≥ 2.4 the call raised `AttributeError`, which the pricers' `try/except`
+  silently swallowed — falling back to flat Black-Scholes at √v0 (~8% vol) and
+  returning garbage prices with no skew or jumps. This made Bates calibration
+  unfittable: every candidate scored ~15 vol-pts, so the optimizer froze at its
+  Phase-0 baseline (`lam=0.000, mu_J=-0.05, sig_J=0.10`). Merton was unaffected
+  (it uses a closed-form BS series, no Fourier integration), which is why Merton
+  fit well while Bates stayed frozen on the same snapshot.
+
+  Fix: bind `_np_trapz` once at import to `numpy.trapezoid` (numpy ≥ 2.0) with a
+  fallback to `numpy.trapz` (numpy < 2.0), and use it in all four integration
+  sites. Reproduced on the deployment environment (Python 3.11 / numpy 2.4.6 /
+  scipy 1.17.1); was invisible in dev (numpy 2.0.0, where `trapz` still exists).
+  All 130 tests pass; results unchanged on numpy 2.0.
+
 ## [0.6.6] — 2026-06-11
 
 ### Fixed

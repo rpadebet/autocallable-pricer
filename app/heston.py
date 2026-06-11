@@ -60,6 +60,16 @@ from scipy.stats import norm
 from typing import Optional
 import warnings
 
+# numpy 2.0 renamed `trapz` → `trapezoid` and REMOVED `trapz` in later 2.x releases
+# (e.g. numpy 2.4). The fast Fourier pricers below integrate with this function;
+# if it raised AttributeError it was silently swallowed by their try/except and the
+# pricer fell back to flat Black-Scholes — producing garbage Bates/Heston prices and
+# freezing calibration. Bind the correct name once, supporting both numpy generations.
+try:
+    from numpy import trapezoid as _np_trapz   # numpy >= 2.0
+except ImportError:                            # numpy < 2.0
+    from numpy import trapz as _np_trapz
+
 
 # ---------------------------------------------------------------------------
 # Heston Characteristic Function
@@ -824,13 +834,13 @@ def _heston_call_batch_fast(
 
             # P2 integrands and trapz across phi → (n_K,)
             intgd_P2 = np.real(exp_terms * (cf_phi / (1j * phi_arr))[np.newaxis, :])
-            I2 = np.trapz(intgd_P2, phi_arr, axis=1)
+            I2 = _np_trapz(intgd_P2, phi_arr, axis=1)
 
             # P1 integrands and trapz across phi → (n_K,)
             intgd_P1 = np.real(
                 exp_terms * (cf_phi_m1j / (1j * phi_arr * cf_neg_i))[np.newaxis, :]
             )
-            I1 = np.trapz(intgd_P1, phi_arr, axis=1)
+            I1 = _np_trapz(intgd_P1, phi_arr, axis=1)
 
             P1 = 0.5 + I1 / np.pi
             P2 = 0.5 + I2 / np.pi
@@ -986,12 +996,12 @@ def _bates_call_batch_fast(
             exp_terms = np.exp(-1j * np.outer(log_K, phi_arr))
 
             intgd_P2 = np.real(exp_terms * (cf_phi / (1j * phi_arr))[np.newaxis, :])
-            I2 = np.trapz(intgd_P2, phi_arr, axis=1)
+            I2 = _np_trapz(intgd_P2, phi_arr, axis=1)
 
             intgd_P1 = np.real(
                 exp_terms * (cf_phi_m1j / (1j * phi_arr * cf_neg_i))[np.newaxis, :]
             )
-            I1 = np.trapz(intgd_P1, phi_arr, axis=1)
+            I1 = _np_trapz(intgd_P1, phi_arr, axis=1)
 
             P1 = 0.5 + I1 / np.pi
             P2 = 0.5 + I2 / np.pi
