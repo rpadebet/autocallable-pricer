@@ -53,9 +53,12 @@ st.title("🔲 Finite Difference PDE Grid Visualization")
 
 # ── Settings-changed banner ─────────────────────────────────────────────────
 def _param_fingerprint_fdm(p: dict) -> str:
-    return "|".join(str(p.get(k)) for k in (
-        "security_name", "vol_model", "S0", "r", "q", "sigma", "n_paths", "seed",
+    base = "|".join(str(p.get(k)) for k in (
+        "security_name", "S0", "r", "q", "sigma", "n_paths", "seed",
     ))
+    fdm_top = st.session_state.get("fdm_vol_top", "Flat (Black-Scholes)")
+    fdm_sub = st.session_state.get("fdm_vol_local_sub", "Cubic-Spline")
+    return base + f"|{fdm_top}|{fdm_sub}"
 
 _cur_fp_fdm = _param_fingerprint_fdm(params)
 _last_fp_fdm = st.session_state.get("fdm_last_run_fp", None)
@@ -83,8 +86,12 @@ c1, c2 = st.columns([1, 3])
 with c1:
     run_fdm = st.button("▶ Run FD + Build Grid", type="primary", use_container_width=True)
 
-_vol_label = params.get("vol_model", "flat").replace("local", "Dupire Local Vol").title()
-_vol_str = _vol_label if params.get("vol_model") != "flat" else f"Flat \u03c3 = {params['sigma']*100:.1f}%"
+_vol_label = "Dupire Local Vol" if _fdm_vol_model == "local" else "Flat"  # set by radio above
+_vol_str = (
+    f"Local Vol ({_fdm_dupire_type.upper()} Dupire)"
+    if _fdm_vol_model == "local"
+    else f"Flat \u03c3 = {params['sigma']*100:.1f}%"
+)
 st.caption(
     f"Grid: N\u2093 = {params['N_x']} | N\u03c4 = {params['N_tau']} | x_min = {params['x_min']} | "
     f"Vol: {_vol_str} | "
