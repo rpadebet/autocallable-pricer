@@ -405,18 +405,20 @@ class MCStandardPricer:
             active = ~called
 
             barrier_i = self.ac.call_barrier_at_period(i) * self.S_ref
-            triggered = active & (S_i >= barrier_i)
 
             coupon_cond = S_i >= self.ac.coupon_barrier * self.S_ref
             coupon = np.where(coupon_cond, self.ac.coupon_per_period(), 0.0)
 
-            # Called at this observation: redemption + coupon
-            payoffs[triggered] = (self.ac.redemption_at_call * self.ac.notional
-                                  + coupon[triggered]) * np.exp(-self.r * t_i)
-            called |= triggered
-
-            # Per-observation coupon for active (non-called) paths
+            # Per-observation coupon for ALL active paths (coupon is independent
+            # of autocall — paid even if not called, as long as not yet redeemed).
             payoffs[active] += coupon[active] * np.exp(-self.r * t_i)
+
+            # Called at this observation: add redemption (coupon already paid above)
+            triggered = active & (S_i >= barrier_i)
+            if triggered.any():
+                payoffs[triggered] += (self.ac.redemption_at_call * self.ac.notional
+                                       * np.exp(-self.r * t_i))
+            called |= triggered
 
         survived = ~called
         if survived.any():
@@ -424,20 +426,18 @@ class MCStandardPricer:
             T = self.ac.maturity_years
 
             if self.ac.protection_type == "soft_protection":
-                # Digital autocall: capital-protected terminal with 100% coupon threshold
+                # Digital autocall: capital-protected terminal, coupon already paid
                 base = np.maximum(self.ac.protection_floor, S_T / self.S_ref) * self.ac.notional
-                cpn = np.where(S_T >= self.S_ref, self.ac.coupon_per_period(), 0.0)
-                payoffs[survived] = (base + cpn) * np.exp(-self.r * T)
+                payoffs[survived] += base * np.exp(-self.r * T)
             else:
-                # european_ki: knock-in observed at maturity only (terminal spot)
+                # european_ki: knock-in at maturity only, coupon already paid in loop
                 ki_surv = S_T < self.ac.protection_barrier * self.S_ref
-                coupon_mask = S_T >= self.ac.coupon_barrier * self.S_ref
-                payoffs_surv = np.where(
+                principal = np.where(
                     ki_surv,
-                    np.maximum(S_T / self.S_ref, self.ac.protection_floor) * self.ac.notional * np.exp(-self.r * T),
-                    (self.ac.notional + np.where(coupon_mask, self.ac.coupon_per_period(), 0.0)) * np.exp(-self.r * T),
+                    np.maximum(S_T / self.S_ref, self.ac.protection_floor) * self.ac.notional,
+                    self.ac.notional,
                 )
-                payoffs[survived] = payoffs_surv
+                payoffs[survived] += principal * np.exp(-self.r * T)
 
         if store_paths:
             n_store = min(max_stored, n_paths)

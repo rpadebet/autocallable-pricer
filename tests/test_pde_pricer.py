@@ -195,7 +195,7 @@ def test_fd_vs_mc_consistency(phoenix_ac):
     mc_res = mc.price()
 
     diff = abs(fd_res.price - mc_res.price)
-    tolerance = 3 * mc_res.std_err + 25.0  # 3σ + $25 (raised for per-obs coupons)
+    tolerance = 3 * mc_res.std_err + 5.0  # 3sigma + $5 numerical tolerance
     assert diff < tolerance, (
         f"FD ${fd_res.price:.2f} and MC ${mc_res.price:.2f} differ by ${diff:.2f}"
         f" (tol ${tolerance:.2f})"
@@ -558,4 +558,3 @@ def test_fd_autocall_bc_coupon_gating(phoenix_ac):
         assert abs(v - redemption_plus) < 1.0, (
             f"Above coupon_barrier expected {redemption_plus:.2f}, got {v:.2f}"
         )
-

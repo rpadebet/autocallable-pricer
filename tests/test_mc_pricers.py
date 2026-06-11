@@ -97,9 +97,8 @@ def test_mc_methods_agree(phoenix_ac):
     sv_res = sv.price()
 
     diff = abs(mc_res.price - sv_res.price)
-    # Combined tolerance: 3σ of each method plus $25 for systematic bias
-    # (raised from $5 — per-obs coupon payments increase price scatter)
-    tol = 3 * (mc_res.std_err + sv_res.std_err) + 25.0
+    # Combined tolerance: 3σ of each method plus $5 for any systematic bias
+    tol = 3 * (mc_res.std_err + sv_res.std_err) + 5.0
     assert diff < tol, \
         f"MC ${mc_res.price:.2f} and Survival MC ${sv_res.price:.2f} " \
         f"differ by ${diff:.2f} (tol ${tol:.2f})"
@@ -468,7 +467,8 @@ def test_bates_price_differs_from_heston(phoenix_ac):
 
     assert np.isfinite(res_b.price), f"Bates price not finite: {res_b.price}"
     assert 0 < res_b.price < 1100, f"Bates price out of range: {res_b.price:.2f}"
-    # The jump premium can be small at 3000 paths; we just verify the price is valid.
+    # With 3000 paths, the jump premium is often within MC noise of Heston.
+    # The key validation: both pricers return finite, reasonable prices.
 
 
 def test_bates_zero_lambda_equals_heston(phoenix_ac):
@@ -532,4 +532,3 @@ def test_merton_series_n_terms_convergence():
         f"Merton series n_terms=10 vs n_terms=20 max difference={max_diff:.6f} > $0.01. "
         f"Series has not converged at n_terms=10 for these parameters."
     )
-

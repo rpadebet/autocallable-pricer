@@ -677,9 +677,10 @@ class FDPricer:
             t_current = t_axis_phys[step + 1]  # time after this step
 
             # --- Autocall BC at observation dates ---
-            # Apply when we cross an observation date going backward in time
+            # Apply when we cross an observation date going backward in time.
+            # Use non-strict upper bound so maturity (t_obs=T) fires at step 0.
             for i, t_obs in enumerate(obs_dates):
-                if (not obs_processed[i]) and (t_current <= t_obs < t_axis_phys[step]):
+                if (not obs_processed[i]) and (t_current <= t_obs <= t_axis_phys[step]):
                     barrier = self.ac.call_barrier_at_period(i) * self.S_ref
                     call_pv = (self.ac.redemption_at_call * self.ac.notional
                                + self.ac.coupon_per_period())
