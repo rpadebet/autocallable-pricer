@@ -386,24 +386,65 @@ with tab2:
         st.info("👆 Click **Calibrate All Models** to fit Heston, Merton, and Bates.")
 
     else:
-        # ── Heston individual params ────────────────────────────────────────
-        if cal_h and heston_obj:
-            st.subheader("Heston Parameters")
-            col_p, col_r = st.columns([2, 1])
-            with col_p:
+        # ── All calibrated model params (3-column layout) ───────────────────
+        st.subheader("Calibrated Parameters")
+        col_h, col_m, col_b_disp = st.columns(3)
+
+        with col_h:
+            st.markdown("**Heston** (5 params)")
+            if cal_h and heston_obj:
+                feller = heston_obj.kappa * heston_obj.theta > 0.5 * heston_obj.gamma**2
                 st.markdown(f"""
 | Param | Value |
 |---|---|
-| v₀ | {heston_obj.v0:.5f} (σ = {heston_obj.v0**0.5*100:.2f}%) |
+| v₀ | {heston_obj.v0:.5f} |
+| σ₀ | {heston_obj.v0**0.5*100:.2f}% |
 | κ | {heston_obj.kappa:.4f} |
-| θ | {heston_obj.theta:.5f} (σ∞ = {heston_obj.theta**0.5*100:.2f}%) |
+| θ | {heston_obj.theta:.5f} |
+| σ∞ | {heston_obj.theta**0.5*100:.2f}% |
 | γ | {heston_obj.gamma:.4f} |
 | ρ | {heston_obj.rho:.4f} |
+| RMSE | {cal_h['rmse']*100:.2f} v-pts |
+| Feller | {"✅" if feller else "❌"} |
 """)
-            with col_r:
-                st.metric("Heston RMSE", f"{cal_h['rmse']*100:.4f}%")
-                feller = heston_obj.kappa * heston_obj.theta > 0.5 * heston_obj.gamma**2
-                st.metric("Feller Condition", "✅ Met" if feller else "❌ Violated")
+            else:
+                st.caption("Not calibrated")
+
+        with col_m:
+            st.markdown("**Merton** (4 params)")
+            if cal_m:
+                st.markdown(f"""
+| Param | Value |
+|---|---|
+| σ | {cal_m['sigma']:.5f} |
+| λ (jump rate) | {cal_m['lam']:.4f} |
+| μ_J | {cal_m['mu_J']:.5f} |
+| σ_J | {cal_m['sig_J']:.5f} |
+| RMSE | {cal_m['rmse_vol_pts']:.2f} v-pts |
+""")
+            else:
+                st.caption("Not calibrated")
+
+        with col_b_disp:
+            st.markdown("**Bates** (8 params)")
+            if cal_b:
+                feller_b = cal_b.get("feller_satisfied", False)
+                st.markdown(f"""
+| Param | Value |
+|---|---|
+| v₀ | {cal_b['v0']:.5f} |
+| κ | {cal_b['kappa']:.4f} |
+| θ | {cal_b['theta']:.5f} |
+| γ | {cal_b['gamma']:.4f} |
+| ρ | {cal_b['rho']:.4f} |
+| λ (jump rate) | {cal_b['lam']:.4f} |
+| μ_J | {cal_b['mu_J']:.5f} |
+| σ_J | {cal_b['sig_J']:.5f} |
+| RMSE | {cal_b['rmse_vol_pts']:.2f} v-pts |
+| Feller | {"✅" if feller_b else "❌"} |
+""")
+            else:
+                st.caption("Not calibrated")
 
         # ── Fit quality table ───────────────────────────────────────────────
         st.subheader("Fit Quality Comparison")
@@ -592,61 +633,6 @@ with tab2:
             margin=dict(t=60, b=50),
         )
         st.plotly_chart(fig, use_container_width=True)
-
-        # ── Parameter detail ─────────────────────────────────────────────────
-        with st.expander("📋 Full Calibrated Parameters", expanded=False):
-            col_h, col_m, col_b_col = st.columns(3)
-            with col_h:
-                st.markdown("**Heston**")
-                if heston_obj and cal_h:
-                    st.markdown(f"""
-| Param | Value |
-|---|---|
-| v₀ | {heston_obj.v0:.5f} |
-| κ | {heston_obj.kappa:.4f} |
-| θ | {heston_obj.theta:.5f} |
-| γ | {heston_obj.gamma:.4f} |
-| ρ | {heston_obj.rho:.4f} |
-| RMSE | {cal_h['rmse']*100:.4f}% |
-""")
-                else:
-                    st.caption("Not yet calibrated")
-
-            with col_m:
-                st.markdown("**Merton**")
-                if cal_m:
-                    st.markdown(f"""
-| Param | Value |
-|---|---|
-| σ | {cal_m['sigma']:.4f} |
-| λ | {cal_m['lam']:.4f} |
-| μ_J | {cal_m['mu_J']:.4f} |
-| σ_J | {cal_m['sig_J']:.4f} |
-| RMSE | {cal_m['rmse_vol_pts']:.4f}% |
-""")
-                else:
-                    st.caption("Not yet calibrated")
-
-            with col_b_col:
-                st.markdown("**Bates**")
-                if cal_b:
-                    feller_ok = cal_b.get("feller_satisfied", False)
-                    st.markdown(f"""
-| Param | Value |
-|---|---|
-| v₀ | {cal_b['v0']:.5f} |
-| κ | {cal_b['kappa']:.4f} |
-| θ | {cal_b['theta']:.5f} |
-| γ | {cal_b['gamma']:.4f} |
-| ρ | {cal_b['rho']:.4f} |
-| λ | {cal_b['lam']:.4f} |
-| μ_J | {cal_b['mu_J']:.4f} |
-| σ_J | {cal_b['sig_J']:.4f} |
-| Feller | {"✅" if feller_ok else "❌"} |
-| RMSE | {cal_b['rmse_vol_pts']:.4f}% |
-""")
-                else:
-                    st.caption("Not yet calibrated")
 
         st.caption(
             "**Interpretation**: Bates nests both Heston (λ=0) and Merton (v₀=const). "

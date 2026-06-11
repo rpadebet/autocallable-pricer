@@ -21,6 +21,7 @@ DESIGN DECISIONS:
       snapshot share the same spot (collected in a single API call).
 """
 
+import json
 import os
 import glob
 import pandas as pd
@@ -319,3 +320,35 @@ def resolve_data_dir(relative: str = "sample_data") -> str:
     # This file is at <project_root>/app/data_loader.py
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     return os.path.join(project_root, relative)
+
+
+def load_calibration_cache(data_dir: str = DEFAULT_DATA_DIR) -> dict:
+    """
+    Load the pre-computed Heston / Bates calibration cache from JSON.
+
+    WHY: Running calibration interactively takes 15-90 s per snapshot.
+    The precalibrate.py script runs once offline and saves results for all
+    snapshots to sample_data/calibrations_cache.json.  This function loads
+    that file so the sidebar can inject the right parameters instantly when
+    the user selects a snapshot date.
+
+    Schema:
+        {
+          "20260609_1200": {
+            "heston": {v0, kappa, theta, gamma, rho, rmse_vol_pts, ...},
+            "bates":  {v0, kappa, theta, gamma, rho, lam, mu_J, sig_J, rmse_vol_pts, ...}
+          },
+          ...
+        }
+
+    Returns:
+        Dict keyed by snapshot key, or {} if file does not exist yet.
+    """
+    path = os.path.join(data_dir, "calibrations_cache.json")
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except Exception:
+        return {}

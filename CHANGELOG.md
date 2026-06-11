@@ -4,6 +4,55 @@ All notable changes to the AutoCallable Analytics Platform are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 Versioning follows [Semantic Versioning](https://semver.org/): patch (0.0.X) for bug fixes, minor (0.X.0) for new features, major (X.0.0) for architecture changes.
 
+## [0.6.3] — 2026-06-11
+
+### Fixed
+
+- **`app/pages/02_Pricer.py` — Calibration banner now shows correct model params**
+  When **Bates** is selected, the banner now shows all 8 Bates params (v₀, κ, θ, γ, ρ,
+  λ, μ_J, σ_J) with RMSE. If Bates is not yet calibrated but Heston is, a warning
+  banner shows the Heston diffusion params + default jump params. Previously the banner
+  always said "Calibrated Heston params in use" regardless of which model was selected,
+  confusing users who switched to Bates. Also added θ and γ to the Heston banner.
+
+- **`app/pages/01_Vol_Surface.py` — Calibrate tab now shows all 3 models' params**
+  Replaced the Heston-only parameter block with a 3-column layout showing Heston, Merton,
+  and Bates params side-by-side immediately after calibration completes. Each column shows
+  the full parameter table (v₀, σ₀, κ, θ, γ, ρ, jump params, RMSE, Feller). Removed the
+  redundant collapsed "Full Calibrated Parameters" expander that duplicated the same data.
+
+### Added
+
+- **`scripts/precalibrate.py` — Offline pre-calibration script for all snapshots**
+  New script that runs Heston + Bates calibration on every snapshot in `sample_data/`
+  and saves results to `sample_data/calibrations_cache.json`. Supports `--force` flag
+  and incremental saves (safe to interrupt and resume). Eliminates interactive wait time
+  on the Pricer and Vol Surface pages when pre-calibrated params are available.
+
+- **`app/data_loader.py` — `load_calibration_cache()` function**
+  Loads `sample_data/calibrations_cache.json` and returns the dict keyed by snapshot key.
+  Returns `{}` gracefully if the file is missing or malformed.
+
+- **`app/components/sidebar.py` — Snapshot auto-populates S0 and r**
+  When a new snapshot date is selected, the sidebar now automatically sets S0 and r from
+  the snapshot's `spot` and `rfr` columns. Subsequent re-renders with the same snapshot
+  preserve any manual overrides. Implemented via a `_snap_key_for_rates` tracker key.
+
+- **`app/components/sidebar.py` — Pre-calibrated params auto-load on snapshot change**
+  When a new snapshot is selected, the sidebar auto-loads `heston_cal` and `bates_cal`
+  from the calibration cache (if available), so calibrated params are instantly available
+  without waiting for a new calibration run. Tracker key `_snap_key_for_cals` prevents
+  overwriting manually re-calibrated values on re-render.
+
+- **`app/components/sidebar.py` — `use_calibrated_bates` toggle**
+  Added a "Use calibrated Bates values" toggle (default on) in the Bates Jump Parameters
+  expander, matching the existing Heston toggle. When on and `bates_cal` is loaded,
+  jump params (λ, μ_J, σ_J) are injected from the cache and sliders are disabled.
+
+- **`app/components/sidebar.py` — Active vol model indicator in section ③**
+  Added a caption showing the currently selected vol model (e.g. "🔴 Vol model: Bates")
+  so users can confirm their Pricer page selection is reflected in the sidebar params.
+
 ## [0.6.2] — 2026-06-10
 
 ### Changed

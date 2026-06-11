@@ -174,7 +174,7 @@ if ac.structure_type == "worst_of":
         "Basket simulation via Cholesky-correlated GBMs is planned for a future release. "
         "For now, use this as an approximate single-asset price only."
     )
-if _vm_selected in ("heston", "bates"):
+if _vm_selected == "heston":
     _heston_cal = st.session_state.get("heston_cal")
     if _heston_cal:
         st.success(
@@ -183,8 +183,10 @@ if _vm_selected in ("heston", "bates"):
             f"({_heston_cal.get('n_quotes', '?')} quotes)  |  "
             f"v₀={_heston_cal.get('v0', 0.04):.4f}  "
             f"κ={_heston_cal.get('kappa', 1.5):.2f}  "
+            f"θ={_heston_cal.get('theta', 0.04):.4f}  "
+            f"γ={_heston_cal.get('gamma', 0.30):.2f}  "
             f"ρ={_heston_cal.get('rho', -0.7):.2f}",
-            icon="📈",
+            icon="\U0001f4c8",
         )
     else:
         st.info(
@@ -193,9 +195,47 @@ if _vm_selected in ("heston", "bates"):
             f"v₀={params.get('v0', 0.04):.3f}  κ={params.get('kappa', 1.5):.1f}  "
             f"θ={params.get('theta', 0.04):.3f}  γ={params.get('gamma', 0.30):.2f}  "
             f"ρ={params.get('rho', -0.70):.2f}.  "
-            f"For market-fitted parameters, go to **Vol Surface → Tab 3 → Calibrate Heston**, "
+            f"For market-fitted parameters, go to **Vol Surface → Tab 3 → Calibrate All Models**, "
             f"then enable **Use calibrated values** in the sidebar.",
-            icon="📈",
+            icon="\U0001f4c8",
+        )
+elif _vm_selected == "bates":
+    _bates_cal = st.session_state.get("bates_cal")
+    _heston_cal = st.session_state.get("heston_cal")
+    if _bates_cal:
+        st.success(
+            f"✅ **Calibrated Bates params in use** — "
+            f"RMSE {_bates_cal.get('rmse_vol_pts', 0.0):.1f} vol-pts  "
+            f"({_bates_cal.get('n_quotes', '?')} quotes)  |  "
+            f"v₀={_bates_cal.get('v0', 0.04):.4f}  "
+            f"κ={_bates_cal.get('kappa', 1.5):.2f}  "
+            f"θ={_bates_cal.get('theta', 0.04):.4f}  "
+            f"γ={_bates_cal.get('gamma', 0.30):.2f}  "
+            f"ρ={_bates_cal.get('rho', -0.7):.2f}  |  "
+            f"λ={_bates_cal.get('lam', 0.1):.2f}  "
+            f"μⱼ={_bates_cal.get('mu_J', -0.05):.3f}  "
+            f"σⱼ={_bates_cal.get('sig_J', 0.10):.3f}",
+            icon="\U0001f4c8",
+        )
+    elif _heston_cal:
+        st.warning(
+            f"⚠️ **Bates not yet calibrated — using Heston diffusion + default jump params.**  "
+            f"Diffusion: v₀={_heston_cal.get('v0', 0.04):.4f}  "
+            f"κ={_heston_cal.get('kappa', 1.5):.2f}  "
+            f"ρ={_heston_cal.get('rho', -0.7):.2f}  |  "
+            f"Jumps (defaults): λ={params.get('lam_j', 0.1):.2f}  "
+            f"μⱼ={params.get('mu_j', -0.05):.3f}  "
+            f"σⱼ={params.get('sig_j', 0.10):.3f}.  "
+            f"For full Bates calibration go to **Vol Surface → Tab 3 → Calibrate All Models**.",
+            icon="\U0001f4c8",
+        )
+    else:
+        st.info(
+            f"ℹ️ **Bates not yet calibrated to market.** "
+            f"Using default Heston + jump parameters. "
+            f"For market-fitted parameters, go to **Vol Surface → Tab 3 → Calibrate All Models**, "
+            f"then enable **Use calibrated Bates values** in the sidebar.",
+            icon="\U0001f4c8",
         )
 
 # ── Control bar ────────────────────────────────────────────────────────────────

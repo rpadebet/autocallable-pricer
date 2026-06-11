@@ -44,7 +44,7 @@ PERSISTENCE DESIGN:
 
 import os
 import streamlit as st
-from app.data_loader import list_available_snapshots, load_snapshot, get_spot_price, get_rfr, resolve_data_dir
+from app.data_loader import list_available_snapshots, load_snapshot, get_spot_price, get_rfr, resolve_data_dir, load_calibration_cache
 from app.components.securities import list_securities, get_security
 
 
@@ -98,6 +98,12 @@ def _cached_load_snapshot(key: str, data_dir: str):
     return load_snapshot(key, data_dir)
 
 
+@st.cache_data(show_spinner=False)
+def _cached_cal_cache(data_dir: str) -> dict:
+    """Module-level cached loader for the pre-computed calibrations JSON."""
+    return load_calibration_cache(data_dir)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Vol model registry (module-level constant — same on every page render)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -143,13 +149,17 @@ def _ensure_sidebar_defaults(snaps: list, pre_built: list, data_dir: str = "") -
         # ② Product
         "security_name":       all_sec_names[0] if all_sec_names else "",
         "S0":                  5500.0,             # overridden from market data below if absent
+        # ① snapshot-change trackers (non-widget — survive page navigation)
+        "_snap_key_for_rates": "",   # reset S0/r from market data on snapshot change
+        "_snap_key_for_cals":  "",   # inject pre-calibrated params on snapshot change
         # ③ Vol model — selection widget lives on Pricer page; these keys feed sidebar logic
         "pricer_vol_top":       "Flat (Black-Scholes)",  # top-level choice
         "pricer_vol_local_sub": "Cubic-Spline",          # local vol sub-choice
         "pricer_vol_stoch_sub": "Heston",                # stochastic sub-choice
         # ④ Model parameters
         "sigma_flat":          0.20,
-        "use_calibrated_heston": False,
+        "use_calibrated_heston": True,   # default ON — pre-calibrated params load at startup
+        "use_calibrated_bates":  True,   # default ON — controls jump param injection
         "v0":                  0.04,     # initial variance → 20% vol
         "kappa":               2.0,      # mean reversion speed (realistic SPX: 1.5–3.0)
         "theta":               0.04,     # long-run variance → 20% vol
@@ -240,15 +250,27 @@ def render_sidebar(page_name: str = "") -> dict:
         S0_market  = get_spot_price(snap_df)
         rfr_market = get_rfr(snap_df)
 
-        # r and S0: set from market data the very first time (session_state absent);
-        # after that, whatever the user typed is in session_state and we don't touch it.
-        # BACKUP RESTORE: prefer the user's last-used value from _sidebar_backup over
-        # market data, so a page navigation doesn't silently reset their manual override.
-        if "r_initialized" not in st.session_state:
-            _backup = st.session_state.get("_sidebar_backup", {})
-            st.session_state["r"]            = float(round(_backup.get("r",  rfr_market), 4))
-            st.session_state["S0"]           = float(round(_backup.get("S0", S0_market),  1))
-            st.session_state["r_initialized"] = True
+        # S0 and r: reset from snapshot market data whenever the snapshot date changes.
+        # WHY: each snapshot has its own spot and risk-free rate; selecting a different
+        # date should auto-populate those values. The user can still override manually
+        # after the reset — subsequent renders with the same snapshot preserve their edits.
+        if st.session_state.get("_snap_key_for_rates") != selected_key:
+            st.session_state["S0"] = float(round(S0_market, 1))
+            st.session_state["r"]  = float(round(rfr_market, 4))
+            st.session_state["_snap_key_for_rates"] = selected_key
+
+        # Pre-calibrated params: inject into heston_cal / bates_cal whenever the
+        # snapshot changes.  The sidebar's "Use calibrated" toggles then apply them.
+        # WHY: calibration takes 15-90 s interactively; the pre-computed JSON cache
+        # (generated once by scripts/precalibrate.py) makes it instant.
+        _cal_cache = _cached_cal_cache(data_dir)
+        _snap_cal  = _cal_cache.get(selected_key, {})
+        if st.session_state.get("_snap_key_for_cals") != selected_key:
+            if _snap_cal.get("heston"):
+                st.session_state["heston_cal"] = _snap_cal["heston"]
+            if _snap_cal.get("bates"):
+                st.session_state["bates_cal"]  = _snap_cal["bates"]
+            st.session_state["_snap_key_for_cals"] = selected_key
 
         col_r, col_q = st.columns(2)
         with col_r:
@@ -329,8 +351,8 @@ def render_sidebar(page_name: str = "") -> dict:
 
         # ─────────────────────────────────────────────────────────────────────
         # Section ③: Volatility Model — derived from Pricer page radio buttons
-        # The selectbox has been moved to 02_Pricer.py as a hierarchical radio.
-        # The sidebar reads from session_state keys written by the Pricer page.
+        # The selection widget lives on 02_Pricer.py; the sidebar reads the
+        # session_state keys written there and shows the active model as a label.
         # ─────────────────────────────────────────────────────────────────────
         _pricer_top   = st.session_state.get("pricer_vol_top",   "Flat (Black-Scholes)")
         _pricer_stoch = st.session_state.get("pricer_vol_stoch_sub", "Heston")
@@ -343,6 +365,11 @@ def render_sidebar(page_name: str = "") -> dict:
         else:
             vol_model       = "flat"
             vol_model_label = "Flat (Black-Scholes)"
+
+        # Visual indicator: shows which model is active so the user can confirm
+        # the Pricer-page radio selection is reflected here.
+        _vm_icon = {"flat": "⚪", "local": "🔵", "heston": "🟣", "bates": "🔴"}.get(vol_model, "⚪")
+        st.caption(f"{_vm_icon} **Vol model: {vol_model_label}**  ← set on Pricer page")
 
         st.divider()
 
@@ -368,7 +395,8 @@ def render_sidebar(page_name: str = "") -> dict:
         theta = st.session_state["theta"]
         gamma = st.session_state["gamma"]
         rho   = st.session_state["rho"]
-        use_calibrated = st.session_state["use_calibrated_heston"]
+        use_calibrated       = st.session_state["use_calibrated_heston"]
+        _use_cal_bates_pre   = st.session_state.get("use_calibrated_bates", True)
 
         # ── ④b: Heston parameters — ALWAYS rendered so session_state keys are
         #        always claimed by a widget.
@@ -397,47 +425,43 @@ def render_sidebar(page_name: str = "") -> dict:
 
                 # All widgets below: NO value= — reads from session_state pre-set above
                 use_calibrated = st.toggle(
-                    "Use calibrated values (from Vol Surface page)",
+                    "Use calibrated Heston values",
                     key="use_calibrated_heston",
-                    help="Pulls calibrated parameters set by Vol Surface → Tab 2 → Calibrate Heston.",
+                    help=(
+                        "When ON: uses pre-calibrated params loaded automatically from the "
+                        "snapshot date, or params from Vol Surface → Tab 3 → Calibrate Heston. "
+                        "Toggle OFF to adjust sliders manually."
+                    ),
                 )
 
-                # If toggle is ON: inject calibrated values into slider session_state keys
-                # BEFORE the sliders are rendered. Sliders read exclusively from session_state,
-                # so setting the keys here causes them to display the calibrated values.
-                #
-                # Priority: Bates cal > Heston cal — when Bates is the active model,
-                # use the full 8-param Bates calibration.  When Heston is active, use
-                # the 5-param Heston calibration.
-                _bates_cal = st.session_state.get("bates_cal") if vol_model == "bates" else None
-                _cal = _bates_cal or st.session_state.get("heston_cal")
-                _cal_label = "Bates" if _bates_cal else "Heston"
+                # When toggle is ON: inject calibrated v0/kappa/theta/gamma/rho into
+                # slider session_state keys BEFORE sliders render.
+                # Priority: Bates cal > Heston cal for the variance-process params
+                # (when Bates is active, prefer the Bates-calibrated Heston component).
+                # Jump params are handled separately in the Bates expander below.
+                _bates_cal_h = st.session_state.get("bates_cal") if vol_model == "bates" else None
+                _cal = _bates_cal_h or st.session_state.get("heston_cal")
+                _cal_label = "Bates" if _bates_cal_h else "Heston"
                 _sliders_locked = False
                 if use_calibrated:
                     if _cal:
-                        # Clamp each param to its slider's min/max before injecting
                         st.session_state["v0"]    = float(min(max(_cal.get("v0",    0.04), 0.001), 0.30))
                         st.session_state["kappa"] = float(min(max(_cal.get("kappa", 1.5),  0.1),  10.0))
                         st.session_state["theta"] = float(min(max(_cal.get("theta", 0.04), 0.001), 0.30))
                         st.session_state["gamma"] = float(min(max(_cal.get("gamma", 0.30), 0.05),  1.5))
                         st.session_state["rho"]   = float(min(max(_cal.get("rho",  -0.70), -0.99), -0.01))
-                        # Inject Bates jump params too when using Bates calibration
-                        if _bates_cal:
-                            st.session_state["lam_j"] = float(min(max(_bates_cal.get("lam", 0.5), 0.0), 2.0))
-                            st.session_state["mu_j"]  = float(min(max(_bates_cal.get("mu_J", -0.15), -0.30), 0.10))
-                            st.session_state["sig_j"] = float(min(max(_bates_cal.get("sig_J", 0.25), 0.01), 0.50))
                         _sliders_locked = True
                         rmse_str = f"{_cal.get('rmse_vol_pts', _cal.get('rmse', 0.0) * 100):.1f}"
                         st.success(
                             f"✅ Calibrated {_cal_label} values active — "
                             f"RMSE {rmse_str} vol-pts  "
-                            f"({_cal.get('n_quotes', '?')} quotes fitted)"
+                            f"({_cal.get('n_quotes', '?')} quotes)"
                         )
                     else:
-                        # No calibration in session — guide user to run it
                         st.warning(
-                            "⚠️ No calibration found. "
-                            "Go to **Vol Surface → Tab 2** and click **Calibrate All Models** first.",
+                            "⚠️ No calibration available for this snapshot. "
+                            "Run **scripts/precalibrate.py** to generate the cache, or go to "
+                            "**Vol Surface → Tab 3 → Calibrate Heston** to calibrate interactively.",
                             icon="📈",
                         )
 
@@ -488,26 +512,57 @@ def render_sidebar(page_name: str = "") -> dict:
         with st.expander("Jump Parameters (Bates)", expanded=_bates_active):
             if not _bates_active:
                 st.caption(
-                    "ℹ️ Not active — switch **③ Vol Model** to Bates. "
+                    "ℹ️ Not active — select **Bates** under Stochastic Vol on the Pricer page. "
                     "Values are preserved here while you use a different model."
                 )
             st.caption("N(t) ~ Poisson(λ),  each jump: log-return ~ N(μ_J, σ_J²)")
+
+            # Use calibrated Bates jump params (λ, μ_J, σ_J) — separate toggle from Heston
+            use_calibrated_bates = st.toggle(
+                "Use calibrated Bates values",
+                key="use_calibrated_bates",
+                help=(
+                    "When ON: uses pre-calibrated jump params (λ, μ_J, σ_J) from the snapshot "
+                    "cache, or from Vol Surface → Tab 3 → Calibrate Bates. "
+                    "Toggle OFF to adjust sliders manually."
+                ),
+            )
+            _bates_cal_j = st.session_state.get("bates_cal")
+            _jump_locked = False
+            if use_calibrated_bates:
+                if _bates_cal_j:
+                    st.session_state["lam_j"] = float(min(max(_bates_cal_j.get("lam", 0.5),    0.0),  2.0))
+                    st.session_state["mu_j"]  = float(min(max(_bates_cal_j.get("mu_J", -0.15), -0.30), 0.10))
+                    st.session_state["sig_j"] = float(min(max(_bates_cal_j.get("sig_J", 0.25),  0.01), 0.50))
+                    _jump_locked = True
+                    rmse_b = f"{_bates_cal_j.get('rmse_vol_pts', 0.0):.1f}"
+                    st.success(f"✅ Calibrated Bates jumps active — RMSE {rmse_b} vol-pts")
+                else:
+                    st.warning(
+                        "⚠️ No Bates calibration available. "
+                        "Run **scripts/precalibrate.py** or go to **Vol Surface → Tab 3**.",
+                        icon="📈",
+                    )
+
             lam_j = st.slider(
                 "λ (jumps per year)",
                 min_value=0.0, max_value=2.0, step=0.01, format="%.2f",
                 key="lam_j",
+                disabled=_jump_locked,
                 help="Expected number of jumps per year.",
             )
             mu_j = st.slider(
                 "μ_J (mean log-jump)",
                 min_value=-0.30, max_value=0.10, step=0.01, format="%.2f",
                 key="mu_j",
+                disabled=_jump_locked,
                 help="Negative = downward crash bias.",
             )
             sig_j = st.slider(
                 "σ_J (log-jump vol)",
                 min_value=0.01, max_value=0.50, step=0.01, format="%.2f",
                 key="sig_j",
+                disabled=_jump_locked,
             )
         jump_params = dict(lam=lam_j, mu_J=mu_j, sig_J=sig_j) if _bates_active else None
 
@@ -576,7 +631,7 @@ def render_sidebar(page_name: str = "") -> dict:
             )
 
         st.divider()
-        st.caption("v0.5.1 — AutoCallable Analytics Platform")
+        st.caption("v0.6.3 — AutoCallable Analytics Platform")
 
     # ─────────────────────────────────────────────────────────────────────────
     # Build and return the params dict
@@ -611,6 +666,7 @@ def render_sidebar(page_name: str = "") -> dict:
         "gamma":           gamma,
         "rho":             rho,
         "use_calibrated_heston": use_calibrated,
+        "use_calibrated_bates":  st.session_state.get("use_calibrated_bates", True),
         # Monte Carlo
         "n_paths":    n_paths,
         "n_steps":    n_steps,
@@ -640,6 +696,11 @@ def render_sidebar(page_name: str = "") -> dict:
         "pricer_vol_top":       st.session_state.get("pricer_vol_top",   "Flat (Black-Scholes)"),
         "pricer_vol_local_sub": st.session_state.get("pricer_vol_local_sub", "Cubic-Spline"),
         "pricer_vol_stoch_sub": st.session_state.get("pricer_vol_stoch_sub", "Heston"),
+        # Snapshot-change trackers
+        "_snap_key_for_rates":  st.session_state.get("_snap_key_for_rates", ""),
+        "_snap_key_for_cals":   st.session_state.get("_snap_key_for_cals",  ""),
+        # Calibration toggles
+        "use_calibrated_bates": st.session_state.get("use_calibrated_bates", True),
         "sigma_flat":          sigma_flat,
         "use_calibrated_heston": use_calibrated,
         "v0":                  v0,
