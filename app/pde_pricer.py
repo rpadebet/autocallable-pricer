@@ -295,16 +295,19 @@ class FDPricer:
         the path-dependent boundary conditions imposed at observation dates.
         This is the standard discrete autocall FD approach.
         """
-        # Terminal V: par redemption if not called (conservative; knock-in
-        # is path-dependent and handled approximately here)
-        V_terminal = np.full(self.N_x, self.notional)
-
-        # Intrinsic value below reference: proportional to spot
-        # For knocked-in paths (approximated as terminal spot < S_ref):
-        ki_mask = self.S_axis < self.ac.protection_barrier * self.S_ref
-        V_terminal[ki_mask] = (
-            self.S_axis[ki_mask] / self.S_ref * self.notional
-        )
+        # Terminal V: depends on protection type
+        if self.ac.protection_type == "soft_protection":
+            # Digital autocall: capital-protected terminal, coupon at 100%
+            V_terminal = np.maximum(self.ac.protection_floor, self.S_axis / self.S_ref) * self.notional
+            cpn_mask = self.S_axis >= self.S_ref
+            V_terminal[cpn_mask] += self.ac.coupon_per_period()
+        else:
+            # european_ki: par unless knocked in
+            V_terminal = np.full(self.N_x, self.notional)
+            ki_mask = self.S_axis < self.ac.protection_barrier * self.S_ref
+            V_terminal[ki_mask] = (
+                self.S_axis[ki_mask] / self.S_ref * self.notional
+            )
 
         # Convert V → u using the inverse change of variables at tau=0
         # u(x, 0) = V(x, 0) / (C * exp(alpha * x + beta * 0))
@@ -648,14 +651,17 @@ class FDPricer:
         t_axis_phys = np.linspace(self.T, 0.0, self.N_tau + 1)  # T, T-dt, ..., 0
 
         # --- Terminal payoff at t=T ---
-        # V(S, T) = discounted payoff at maturity for each spot.
-        # Assume: no knock-in at maturity (conservative initialisation).
-        # Paths that knocked in are tracked via the barrier check during backward sweep.
-        V = np.zeros(self.N_x)
-        ki_pv = np.maximum(S_ax / self.S_ref, self.ac.protection_floor) * self.ac.notional
-        safe_pv = self.ac.notional * np.ones(self.N_x)
-        ki_mask = S_ax < self.ac.protection_barrier * self.S_ref
-        V = np.where(ki_mask, ki_pv, safe_pv)
+        if self.ac.protection_type == "soft_protection":
+            # Digital autocall: capital-protected for all spots
+            V = np.maximum(self.ac.protection_floor, S_ax / self.S_ref) * self.ac.notional
+            cpn_mask = S_ax >= self.S_ref
+            V[cpn_mask] += self.ac.coupon_per_period()
+        else:
+            # european_ki: par unless knocked in at terminal
+            ki_pv = np.maximum(S_ax / self.S_ref, self.ac.protection_floor) * self.ac.notional
+            safe_pv = self.ac.notional * np.ones(self.N_x)
+            ki_mask = S_ax < self.ac.protection_barrier * self.S_ref
+            V = np.where(ki_mask, ki_pv, safe_pv)
 
         obs_dates = self.ac.observation_dates()
         obs_processed = [False] * len(obs_dates)
