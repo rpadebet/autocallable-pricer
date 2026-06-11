@@ -4,6 +4,29 @@ All notable changes to the AutoCallable Analytics Platform are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 Versioning follows [Semantic Versioning](https://semver.org/): patch (0.0.X) for bug fixes, minor (0.X.0) for new features, major (X.0.0) for architecture changes.
 
+## [0.6.4] — 2026-06-11
+
+### Fixed
+
+- **`app/heston.py` — Bates calibration warm-start fix**
+  `calibrate_bates` was starting at `lam=0.5` with Heston diffusion params calibrated
+  for `lam=0`. This made the initial point *worse* than plain Heston (visible as 5 of 10
+  snapshots having Bates RMSE > Heston RMSE). Changed to start at `lam=0.02` (near-zero
+  so Bates ≈ Heston at the initial guess), then try two more restarts at `lam=0.3` and
+  `lam=1.0`. Each restart runs its own L-BFGS-B pass; the best result across all three
+  is kept. `maxiter` raised from 200 → 300, `ftol` tightened from 1e-6 → 1e-7.
+
+### Added
+
+- **`scripts/precalibrate.py` — Merton calibration added as step 2 of 3**
+  The pre-calibration script now runs Heston → Merton → Bates for each snapshot.
+  Results saved to cache under `"merton"` key. Skip logic updated to check all three.
+
+- **`app/components/sidebar.py` — Merton auto-loaded from cache on snapshot change**
+  `merton_cal` is now populated from the calibration cache alongside Heston and Bates
+  when a new snapshot is selected, so the Calibrate Models tab on Vol Surface shows
+  pre-loaded Merton params immediately.
+
 ## [0.6.3] — 2026-06-11
 
 ### Fixed

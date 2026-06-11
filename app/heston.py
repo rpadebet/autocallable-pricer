@@ -1284,34 +1284,43 @@ def calibrate_bates(
         (0.01, 0.5),     # sig_J
     ]
 
-    if heston_init:
-        x0 = [
-            heston_init.get("v0", 0.04),
-            heston_init.get("kappa", 1.5),
-            heston_init.get("theta", 0.04),
-            heston_init.get("gamma", 0.3),
-            heston_init.get("rho", -0.7),
-            0.5, -0.05, 0.10,
-        ]
-    else:
-        x0 = [0.04, 1.5, 0.04, 0.3, -0.7, 0.5, -0.05, 0.10]
+    # Build starting points: near-zero lam so Bates ≈ Heston at the initial guess,
+    # then try larger lam values in case the market has a strong jump signal.
+    # Starting at lam=0.5 (old behaviour) broke warm-starting because the Heston
+    # diffusion params were calibrated for lam=0 and become suboptimal at lam=0.5.
+    _hv0    = heston_init.get("v0",    0.04) if heston_init else 0.04
+    _hkappa = heston_init.get("kappa", 1.5)  if heston_init else 1.5
+    _htheta = heston_init.get("theta", 0.04) if heston_init else 0.04
+    _hgamma = heston_init.get("gamma", 0.3)  if heston_init else 0.3
+    _hrho   = heston_init.get("rho",  -0.7)  if heston_init else -0.7
 
-    x0c = [float(np.clip(x0[i], bounds[i][0], bounds[i][1])) for i in range(8)]
-    best_params = x0c
-    best_val = objective(x0c)
+    starting_points = [
+        [_hv0, _hkappa, _htheta, _hgamma, _hrho, 0.02, -0.05, 0.10],
+        [_hv0, _hkappa, _htheta, _hgamma, _hrho, 0.30, -0.05, 0.10],
+        [_hv0, _hkappa, _htheta, _hgamma, _hrho, 1.00, -0.10, 0.15],
+    ]
 
-    try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            res = minimize(
-                objective, x0c, method="L-BFGS-B", bounds=bounds,
-                options={"maxiter": 200, "ftol": 1e-6},
-            )
-        if res.fun < best_val:
-            best_val = res.fun
-            best_params = list(res.x)
-    except Exception:
-        pass
+    best_params = starting_points[0]
+    best_val    = float("inf")
+
+    for sp in starting_points:
+        x0c = [float(np.clip(sp[i], bounds[i][0], bounds[i][1])) for i in range(8)]
+        val0 = objective(x0c)
+        if val0 < best_val:
+            best_val    = val0
+            best_params = x0c
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                res = minimize(
+                    objective, x0c, method="L-BFGS-B", bounds=bounds,
+                    options={"maxiter": 300, "ftol": 1e-7},
+                )
+            if res.fun < best_val:
+                best_val    = res.fun
+                best_params = list(res.x)
+        except Exception:
+            pass
 
     v0, kappa, theta, gamma, rho, lam, mu_J, sig_J = best_params
     return {

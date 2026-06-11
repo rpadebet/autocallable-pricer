@@ -1,12 +1,12 @@
 """
 scripts/precalibrate.py
 ========================
-Pre-calibrate Heston and Bates parameters for every snapshot in sample_data/
-and save the results to sample_data/calibrations_cache.json.
+Pre-calibrate Heston, Merton, and Bates parameters for every snapshot in
+sample_data/ and save results to sample_data/calibrations_cache.json.
 
 WHY PRE-CALIBRATE:
-    Calibration is slow (15–60 s per snapshot for Heston, 30–90 s for Bates).
-    With 10 snapshots and two models, interactive calibration on every page load
+    Calibration is slow (15–60 s per snapshot for Heston, similar for Merton/Bates).
+    With 10 snapshots and three models, interactive calibration on every page load
     is impractical.  Running this script once produces a cache that the sidebar
     auto-loads when a snapshot is selected, giving instant calibrated parameters.
 
@@ -19,7 +19,7 @@ lost if it is interrupted.  Re-running without --force skips already-cached
 snapshots so interrupted runs resume rather than restarting.
 """
 
-import argparse, json, math, os, sys, time, warnings
+import argparse, json, os, sys, time, warnings
 warnings.filterwarnings("ignore")
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -27,7 +27,7 @@ sys.path.insert(0, ROOT)
 
 from app.data_loader import list_available_snapshots, load_snapshot, get_spot_price, get_rfr
 from app.vol_surface import VolSurface
-from app.heston import HestonModel, calibrate_bates
+from app.heston import HestonModel, calibrate_merton, calibrate_bates
 
 DATA_DIR   = os.path.join(ROOT, "sample_data")
 CACHE_PATH = os.path.join(DATA_DIR, "calibrations_cache.json")
@@ -36,13 +36,14 @@ Q_SPX = 0.014  # SPX long-run dividend yield — not stored in snapshot files
 
 def _calibrate_snapshot(snap_df, S0: float, r: float, q: float) -> dict:
     """
-    Run Heston then Bates calibration for one snapshot.
+    Run Heston → Merton → Bates calibration for one snapshot.
 
     Returns:
-        {"heston": {...}, "bates": {...}}
+        {"heston": {...}, "merton": {...}, "bates": {...}}
     """
     vs = VolSurface(snap_df, S0=S0, r=r, q=q)
 
+    # Step 1: Heston
     t1 = time.time()
     hm = HestonModel(S0=S0, r=r, q=q)
     h  = hm.calibrate(vs)
@@ -53,15 +54,33 @@ def _calibrate_snapshot(snap_df, S0: float, r: float, q: float) -> dict:
         f"theta={h['theta']:.4f}  gamma={h['gamma']:.2f}  rho={h['rho']:.2f}"
     )
 
+    # Step 2: Merton (independent of Heston — different model family)
     t2 = time.time()
-    b  = calibrate_bates(snap_df, S0=S0, r=r, q=q, heston_init=h)
+    mkt_calls = snap_df[snap_df["optionType"] == "call"].copy()
+    mkt_calls = mkt_calls.dropna(subset=["impliedVolatility"])
+    mkt_calls = mkt_calls[mkt_calls["impliedVolatility"] > 0]
+    try:
+        m = calibrate_merton(mkt_calls, S0=S0, r=r, q=q)
+        print(
+            f"    Merton  {time.time()-t2:5.0f}s  "
+            f"RMSE={m['rmse_vol_pts']:.2f}vol-pts  "
+            f"sigma={m['sigma']:.4f}  lam={m['lam']:.3f}  "
+            f"mu_J={m['mu_J']:.4f}  sig_J={m['sig_J']:.4f}"
+        )
+    except Exception as e:
+        print(f"    Merton  FAILED: {e}")
+        m = {}
+
+    # Step 3: Bates (warm-started from Heston diffusion params)
+    t3 = time.time()
+    b  = calibrate_bates(mkt_calls, S0=S0, r=r, q=q, heston_init=h)
     print(
-        f"    Bates   {time.time()-t2:5.0f}s  "
+        f"    Bates   {time.time()-t3:5.0f}s  "
         f"RMSE={b['rmse_vol_pts']:.2f}vol-pts  "
-        f"lam={b['lam']:.2f}  mu_J={b['mu_J']:.3f}  sig_J={b['sig_J']:.3f}"
+        f"lam={b['lam']:.3f}  mu_J={b['mu_J']:.4f}  sig_J={b['sig_J']:.4f}"
     )
 
-    return {"heston": h, "bates": b}
+    return {"heston": h, "merton": m, "bates": b}
 
 
 def main():
@@ -90,7 +109,7 @@ def main():
         label = snap["label"]
 
         # Skip if already in cache (unless --force)
-        if not args.force and key in cache and cache[key].get("heston") and cache[key].get("bates"):
+        if not args.force and key in cache and cache[key].get("heston") and cache[key].get("bates") and cache[key].get("merton") is not None:
             print(f"  SKIP  {label}  (cached)")
             continue
 

@@ -267,9 +267,11 @@ def render_sidebar(page_name: str = "") -> dict:
         _snap_cal  = _cal_cache.get(selected_key, {})
         if st.session_state.get("_snap_key_for_cals") != selected_key:
             if _snap_cal.get("heston"):
-                st.session_state["heston_cal"] = _snap_cal["heston"]
+                st.session_state["heston_cal"]  = _snap_cal["heston"]
+            if _snap_cal.get("merton"):
+                st.session_state["merton_cal"]  = _snap_cal["merton"]
             if _snap_cal.get("bates"):
-                st.session_state["bates_cal"]  = _snap_cal["bates"]
+                st.session_state["bates_cal"]   = _snap_cal["bates"]
             st.session_state["_snap_key_for_cals"] = selected_key
 
         col_r, col_q = st.columns(2)
