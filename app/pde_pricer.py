@@ -351,6 +351,19 @@ class FDPricer:
         u_call = np.where(prefactor_called > 1e-10, V_call / prefactor_called, 0.0)
         u[called_mask] = u_call
 
+        # Per-observation coupon for uncalled nodes above coupon barrier.
+        # The coupon is paid at the observation date; the backward sweep
+        # handles discounting via the beta term in the change of variables.
+        if self.ac.coupon_per_period() > 0:
+            cpn_mask = (self.S_axis >= coupon_barrier) & (~called_mask)
+            if cpn_mask.any():
+                prefactor_cpn = (
+                    self.C * np.exp(self.alpha * self.x_axis[cpn_mask] + self.beta * tau)
+                )
+                u_cpn = np.where(prefactor_cpn > 1e-10,
+                                 self.ac.coupon_per_period() / prefactor_cpn, 0.0)
+                u[cpn_mask] += u_cpn
+
         return u
 
     def _cn_step(self, u: np.ndarray) -> np.ndarray:
@@ -665,6 +678,12 @@ class FDPricer:
                     call_pv = (self.ac.redemption_at_call * self.ac.notional
                                + self.ac.coupon_per_period())
                     V = np.where(S_ax >= barrier, call_pv, V)
+
+                    # Per-observation coupon for uncalled nodes above coupon barrier
+                    cpn_barrier = self.ac.coupon_barrier * self.S_ref
+                    cpn_mask = (S_ax >= cpn_barrier) & (S_ax < barrier)
+                    V[cpn_mask] += self.ac.coupon_per_period()
+
                     obs_processed[i] = True
 
             # --- Local vol at each grid node for this time step ---
