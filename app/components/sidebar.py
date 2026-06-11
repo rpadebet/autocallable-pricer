@@ -143,8 +143,10 @@ def _ensure_sidebar_defaults(snaps: list, pre_built: list, data_dir: str = "") -
         # ② Product
         "security_name":       all_sec_names[0] if all_sec_names else "",
         "S0":                  5500.0,             # overridden from market data below if absent
-        # ③ Vol model
-        "vol_model_label":     "Flat (Black-Scholes)",
+        # ③ Vol model — selection widget lives on Pricer page; these keys feed sidebar logic
+        "pricer_vol_top":       "Flat (Black-Scholes)",  # top-level choice
+        "pricer_vol_local_sub": "Cubic-Spline",          # local vol sub-choice
+        "pricer_vol_stoch_sub": "Heston",                # stochastic sub-choice
         # ④ Model parameters
         "sigma_flat":          0.20,
         "use_calibrated_heston": False,
@@ -326,31 +328,21 @@ def render_sidebar(page_name: str = "") -> dict:
         st.divider()
 
         # ─────────────────────────────────────────────────────────────────────
-        # Section ③: Volatility Model
+        # Section ③: Volatility Model — derived from Pricer page radio buttons
+        # The selectbox has been moved to 02_Pricer.py as a hierarchical radio.
+        # The sidebar reads from session_state keys written by the Pricer page.
         # ─────────────────────────────────────────────────────────────────────
-        st.markdown("**③ Volatility Model**")
-
-        # NO index= — reads from session_state["vol_model_label"]
-        vol_model_label = st.selectbox(
-            "Model",
-            options=list(VOL_MODEL_OPTIONS.keys()),
-            key="vol_model_label",
-            help=(
-                "Flat: constant σ (fastest, classic). "
-                "Local Vol: σ(S,t) from Dupire. "
-                "Heston: stochastic variance (CIR). "
-                "Bates: Heston + Poisson jumps."
-            ),
-        )
-        vol_model = VOL_MODEL_OPTIONS[vol_model_label]
-
-        _vol_notes = {
-            "flat":   "Classic Black-Scholes: σ is constant. Fastest pricer.",
-            "local":  "Dupire local vol σ(S,t) computed from the market surface.",
-            "heston": "Stochastic variance: dv = κ(θ−v)dt + γ√v dW_v. Set params in ④.",
-            "bates":  "Heston + Poisson jumps. Set variance & jump params in ④.",
-        }
-        st.caption(_vol_notes[vol_model])
+        _pricer_top   = st.session_state.get("pricer_vol_top",   "Flat (Black-Scholes)")
+        _pricer_stoch = st.session_state.get("pricer_vol_stoch_sub", "Heston")
+        if _pricer_top == "Local Vol Surface":
+            vol_model       = "local"
+            vol_model_label = "Local Vol (Dupire)"
+        elif _pricer_top == "Stochastic Vol":
+            vol_model       = "heston" if _pricer_stoch == "Heston" else "bates"
+            vol_model_label = "Heston Stochastic Vol" if vol_model == "heston" else "Bates (Heston + Jumps)"
+        else:
+            vol_model       = "flat"
+            vol_model_label = "Flat (Black-Scholes)"
 
         st.divider()
 
@@ -398,7 +390,7 @@ def render_sidebar(page_name: str = "") -> dict:
         with st.expander("Heston Variance Process", expanded=_heston_active):
                 if not _heston_active:
                     st.caption(
-                        "ℹ️ Not active — switch **③ Vol Model** to Heston or Bates. "
+                        "ℹ️ Not active — select **Stochastic Vol** on the Pricer page. "
                         "Values are preserved here while you use a different model."
                     )
                 st.caption("dv = κ(θ−v)dt + γ√v dW_v,  Corr(W_S, W_v) = ρ")
@@ -643,7 +635,11 @@ def render_sidebar(page_name: str = "") -> dict:
         "q":                   q,
         "S0":                  S0,
         "security_name":       sec_name_display,
-        "vol_model_label":     vol_model_label,
+        "vol_model_label":      vol_model_label,  # kept for backward compat
+        # Pricer-page vol model radio state (survives page navigations via backup)
+        "pricer_vol_top":       st.session_state.get("pricer_vol_top",   "Flat (Black-Scholes)"),
+        "pricer_vol_local_sub": st.session_state.get("pricer_vol_local_sub", "Cubic-Spline"),
+        "pricer_vol_stoch_sub": st.session_state.get("pricer_vol_stoch_sub", "Heston"),
         "sigma_flat":          sigma_flat,
         "use_calibrated_heston": use_calibrated,
         "v0":                  v0,

@@ -4,6 +4,34 @@ All notable changes to the AutoCallable Analytics Platform are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 Versioning follows [Semantic Versioning](https://semver.org/): patch (0.0.X) for bug fixes, minor (0.X.0) for new features, major (X.0.0) for architecture changes.
 
+## [0.6.2] — 2026-06-10
+
+### Changed
+
+- **`app/pages/02_Pricer.py` — Vol model selector migrated from sidebar to Pricer page**
+  Replaced the flat selectbox in sidebar section ③ with a three-tier hierarchical radio
+  button block at the top of the Pricer page. Top-level choices: **Flat (Black-Scholes)**,
+  **Local Vol Surface**, **Stochastic Vol**. Sub-selections appear contextually:
+  - Local Vol → Cubic-Spline or SVI (smooth) Dupire surface (SVI greyed-out unless built)
+  - Stochastic → Heston or Bates (Heston + Jumps)
+  Session keys `pricer_vol_top`, `pricer_vol_local_sub`, `pricer_vol_stoch_sub` are read
+  by `render_sidebar()` so `params["vol_model"]` stays correct for all other pages.
+  The sub-type selector is also wired into `_param_fingerprint` so switching Cubic↔SVI
+  triggers the "settings changed" banner.
+
+- **`app/pages/01_Vol_Surface.py` — Tab order: Dupire moved to Tab 2, Calibrate to Tab 3**
+  User-visible tab order is now: Build Vol Surface (1) → Dupire Vol Surface (2) → Calibrate
+  Models (3). The Dupire surface is the natural follow-on from building the surface; model
+  calibration is the deeper analytical step. Implemented by reassigning `tab2`/`tab3` aliases
+  after `st.tabs()` so all existing `with tab2:` / `with tab3:` code blocks are unchanged.
+
+- **`app/components/sidebar.py` — Section ③ vol model widget removed**
+  The `st.selectbox` for vol model selection has been removed from the sidebar. The sidebar
+  now derives `vol_model` / `vol_model_label` from the three `pricer_vol_*` session state
+  keys (set by the Pricer page). Factory defaults for all three keys are registered in
+  `_ensure_sidebar_defaults`; all three are persisted in `_sidebar_backup` so the selection
+  survives page navigations.
+
 ## [0.6.1] — 2026-06-10
 
 ### Fixed

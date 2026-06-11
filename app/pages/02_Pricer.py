@@ -70,6 +70,67 @@ if ac is None:
     st.error("Product initialization failed. Check sidebar parameters.")
     st.stop()
 
+# ── Vol Model Selection ─────────────────────────────────────────────────────────
+# Hierarchical radio: top-level (Flat / Local Vol / Stochastic), then sub-choice
+# for Local Vol (Cubic vs SVI Dupire) or Stochastic (Heston vs Bates).
+# WHY ON THIS PAGE: moved from the sidebar so the hierarchical sub-options are
+# visible contextually and SVI availability is checked right where it's used.
+# The session keys `pricer_vol_top`, `pricer_vol_local_sub`, `pricer_vol_stoch_sub`
+# are read by render_sidebar() so `params["vol_model"]` stays in sync.
+st.markdown("#### Volatility Model")
+_top_opts = ["Flat (Black-Scholes)", "Local Vol Surface", "Stochastic Vol"]
+_top_sel = st.radio(
+    "Volatility Model",
+    options=_top_opts,
+    horizontal=True,
+    key="pricer_vol_top",
+    label_visibility="collapsed",
+)
+
+_dupire_surface_type = "cubic"  # default; overridden below for Local Vol
+
+if _top_sel == "Local Vol Surface":
+    _vol_surf_obj = st.session_state.get("vol_surf_obj")
+    _svi_avail = _vol_surf_obj is not None and getattr(_vol_surf_obj, "svi_ready", False)
+    # Guard: if SVI was previously selected but SVI is no longer available, fall back to cubic
+    if not _svi_avail and st.session_state.get("pricer_vol_local_sub") == "SVI (smooth)":
+        st.session_state["pricer_vol_local_sub"] = "Cubic-Spline"
+    _local_opts = ["Cubic-Spline", "SVI (smooth)"] if _svi_avail else ["Cubic-Spline"]
+    _c1, _c2 = st.columns([1, 3])
+    with _c1:
+        _local_sel = st.radio(
+            "Dupire surface", options=_local_opts, horizontal=True, key="pricer_vol_local_sub",
+        )
+    _dupire_surface_type = "svi" if "SVI" in _local_sel else "cubic"
+    with _c2:
+        if not _svi_avail:
+            st.caption(
+                "SVI surface not built — click **Build Vol Surface** on the **Vol Surface** page "
+                "to enable the smooth SVI option."
+            )
+        elif _dupire_surface_type == "svi":
+            st.caption("**SVI Dupire** — per-slice parametric fitting before differentiation → smoother local vol.")
+        else:
+            st.caption("**Cubic-Spline Dupire** — differentiates the bicubic IV spline directly; may be jagged in sparse regions.")
+
+elif _top_sel == "Stochastic Vol":
+    _c1, _c2 = st.columns([1, 3])
+    with _c1:
+        st.radio(
+            "Model", options=["Heston", "Bates (Heston + Jumps)"],
+            horizontal=True, key="pricer_vol_stoch_sub",
+        )
+    with _c2:
+        _stoch_key = st.session_state.get("pricer_vol_stoch_sub", "Heston")
+        if _stoch_key == "Heston":
+            st.caption("**Heston**: mean-reverting variance dv = κ(θ−v)dt + γ√v dW_v. Parameters in sidebar ④.")
+        else:
+            st.caption("**Bates**: Heston + Merton jumps (λ, μ_J, σ_J). Parameters in sidebar ④.")
+else:
+    st.caption("Constant σ (Black-Scholes GBM). Fastest pricer. Set σ in **④ Model Parameters** in the sidebar.")
+
+st.divider()
+
 # ── Settings-changed banner ────────────────────────────────────────────────────
 # Compare a hash of key params to what was used in the last calculation.
 # If different, show a warning so the user knows to re-run.
@@ -81,11 +142,13 @@ def _param_fingerprint(p: dict) -> str:
     the settings most likely to change between navigations. Hashing all of params
     would be fragile (snapshot_df is a DataFrame). This set covers 99% of cases.
     """
-    return "|".join(str(p.get(k)) for k in (
+    base = "|".join(str(p.get(k)) for k in (
         "security_name", "vol_model", "S0", "r", "q", "sigma",
         "n_paths", "seed", "N_x", "N_tau",
         "v0", "kappa", "theta", "gamma", "rho",
     ))
+    # Include dupire sub-type so Cubic↔SVI switch triggers the stale-results banner
+    return base + "|" + st.session_state.get("pricer_vol_local_sub", "Cubic-Spline")
 
 _current_fp = _param_fingerprint(params)
 _last_fp = st.session_state.get("pricer_last_run_fp", None)
@@ -130,7 +193,7 @@ if _vm_selected in ("heston", "bates"):
             f"v₀={params.get('v0', 0.04):.3f}  κ={params.get('kappa', 1.5):.1f}  "
             f"θ={params.get('theta', 0.04):.3f}  γ={params.get('gamma', 0.30):.2f}  "
             f"ρ={params.get('rho', -0.70):.2f}.  "
-            f"For market-fitted parameters, go to **Vol Surface → Tab 2 → Calibrate Heston**, "
+            f"For market-fitted parameters, go to **Vol Surface → Tab 3 → Calibrate Heston**, "
             f"then enable **Use calibrated values** in the sidebar.",
             icon="📈",
         )
@@ -145,45 +208,6 @@ with ctrl2:
 with ctrl3:
     track_conv = st.toggle("Track Convergence", value=True,
                            help="Compute running price estimate at multiple N (adds ~1s)")
-
-# ── Dupire surface type selector (only shown when Local Vol is selected) ──────
-# WHY HERE: When the user picks "Local Vol (Dupire)" as the vol model, they can
-# now choose between two Dupire surfaces:
-#   1. Cubic-Spline Dupire — derived from bicubic spline interpolation of raw IV
-#      quotes. May appear jagged due to data sparsity + numerical differentiation.
-#   2. SVI Dupire — derived after per-slice SVI parametric fitting, which acts as
-#      a principled denoiser before differentiation, yielding a smoother surface.
-#
-# The SVI option is only available if the SVI surface has been built on the
-# Vol Surface page (Tab 3 → Build SVI Surface). If it has not been built yet,
-# the user sees an informational nudge.
-_dupire_surface_type = "cubic"  # default
-if _vm_selected == "local":
-    _vol_surf_obj = st.session_state.get("vol_surf_obj")
-    _svi_available = _vol_surf_obj is not None and getattr(_vol_surf_obj, "svi_ready", False)
-
-    if _svi_available:
-        _dupire_surface_type = st.radio(
-            "Dupire surface for pricing:",
-            options=["Cubic-Spline (jagged)", "SVI (smooth)"],
-            index=0,
-            horizontal=True,
-            key="dupire_surface_selector",
-            help=(
-                "Cubic-Spline: differentiates the bicubic IV spline directly — "
-                "may be jagged in sparse regions.\n\n"
-                "SVI: differentiates a per-slice SVI-fitted IV surface — "
-                "smoother but requires the SVI build step on the Vol Surface page."
-            ),
-        )
-        _dupire_surface_type = "svi" if "SVI" in _dupire_surface_type else "cubic"
-    else:
-        _dupire_surface_type = "cubic"
-        if _vm_selected == "local":
-            st.caption(
-                "📐 **SVI Dupire not available.** To enable the smooth SVI Dupire option, "
-                "go to **Vol Surface → Dupire Vol Surface tab** and click **Build SVI Surface**."
-            )
 
 st.divider()
 

@@ -111,11 +111,17 @@ st.divider()
 # TABS
 # ==============================================================================
 
-tab1, tab2, tab3 = st.tabs([
+# Tab positions: Build Surface (1) | Dupire (2) | Calibrate Models (3)
+# The local aliases tab2/tab3 preserve the existing with-block assignments below
+# without touching those blocks — tab2 content (Calibrate) renders as Tab 3,
+# tab3 content (Dupire) renders as Tab 2.
+tab1, _tab_dupire, _tab_calibrate = st.tabs([
     "📊 Build Vol Surface",
-    "🔬 Calibrate Models",
     "📐 Dupire Vol Surface",
+    "🔬 Calibrate Models",
 ])
+tab2 = _tab_calibrate  # existing `with tab2:` block (Calibrate Models) → Tab 3
+tab3 = _tab_dupire     # existing `with tab3:` block (Dupire) → Tab 2
 
 # ==============================================================================
 # TAB 1 — BUILD VOL SURFACE
