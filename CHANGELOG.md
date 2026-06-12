@@ -4,6 +4,36 @@ All notable changes to the AutoCallable Analytics Platform are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 Versioning follows [Semantic Versioning](https://semver.org/): patch (0.0.X) for bug fixes, minor (0.X.0) for new features, major (X.0.0) for architecture changes.
 
+## [0.6.10] — 2026-06-12
+
+### Fixed
+
+- **`app/mc_survival.py` — broadcasting crash in Survival MC when paths deactivate mid-simulation**
+  `price()` computed the terminal payoff `term_pv` on the masked subset
+  `s[active]` (shape `(n_active,)`) but accumulated it against full-length
+  arrays: `payoffs += active * L * term_pv` — raising
+  `ValueError: operands could not be broadcast together with shapes (10000,) (8178,)`
+  whenever ≥1 path had been deactivated. Deactivation (`p_j < 1e-10`) is
+  legitimate survival-MC behaviour but only occurs when the survival
+  probability underflows; the trigger was Step-Down Barrier (call barrier
+  drops 100%→95%→90%) priced under the 20260610_1545 Bates calibration, whose
+  θ=0.001 collapses σ_t toward the 0.02 clamp floor — at each barrier
+  step-down, paths just below the old barrier underflow against the new one
+  (246 paths killed at obs 12, 1,609 at obs 18). Flat/local/Heston vol never
+  underflowed, so all prior tests passed with `active.all()` true and the bug
+  stayed latent. Fix: `payoffs[active] += L[active] * term_pv` (matches the
+  scalar `_price_one_path` reference). Regression test added
+  (`test_survival_bates_stepdown_path_deactivation`); 131/131 tests pass.
+
+  ⚠️ Known limitation surfaced while verifying: with jump-heavy calibrations
+  (this snapshot's Bates has μ_J=−0.50, λ=0.32), Survival MC's jump
+  approximation only corrects p_j for call-barrier crossings — sampled paths
+  never experience down-jumps, so knock-in risk from jumps is missed.
+  Survival MC = 1025.09 vs Standard MC = 991.48 on the same config
+  (non-overlapping CIs). Documented in mc_survival.py's module docstring as
+  "accurate when jump intensity lam is small"; this calibration pushes most
+  variance into the jump term, violating that assumption.
+
 ## [0.6.9] — 2026-06-12
 
 ### Changed

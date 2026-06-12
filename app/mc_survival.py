@@ -545,7 +545,13 @@ class MCSurvivalPricer:
                         * self.ac.notional * math.exp(-self.r * T),
                     self.ac.notional * math.exp(-self.r * T),
                 )
-            payoffs += active * L * term_pv
+            # term_pv was computed on the masked subset s[active] (shape
+            # (n_active,)), so accumulate with masked indexing. The previous
+            # full-array form `payoffs += active * L * term_pv` only broadcast
+            # when no path had been deactivated (n_active == N) and crashed
+            # whenever p_j underflow removed paths (e.g. step-down barriers
+            # with a low-theta Bates calibration).
+            payoffs[active] += L[active] * term_pv
 
         # Convergence tracking
         conv_series = []

@@ -532,3 +532,37 @@ def test_merton_series_n_terms_convergence():
         f"Merton series n_terms=10 vs n_terms=20 max difference={max_diff:.6f} > $0.01. "
         f"Series has not converged at n_terms=10 for these parameters."
     )
+# ---------------------------------------------------------------------------
+# Regression: path deactivation must not crash the terminal payoff block
+# ---------------------------------------------------------------------------
+
+def test_survival_bates_stepdown_path_deactivation():
+    """
+    Regression test for the (N,) vs (n_active,) broadcasting crash in
+    MCSurvivalPricer.price() — found pricing Step-Down Barrier with Bates
+    on the 20260610_1545 snapshot.
+
+    MECHANISM: step-down call barriers drop 100% -> 95% -> 90% while a Bates
+    calibration with tiny long-run variance (theta=0.001) collapses sigma_t
+    toward the 0.02 clamp floor. At each barrier step-down, paths sampled just
+    below the OLD barrier are suddenly far above the NEW one; their survival
+    probability underflows (p_j < 1e-10) and they are removed from the active
+    mask. The terminal payoff block then computed term_pv on s[active]
+    (shape (n_active,)) but accumulated it against full-length (N,) arrays:
+    "operands could not be broadcast together with shapes (10000,) (8178,)".
+
+    The Bates params below mirror that snapshot's calibration cache entry.
+    Before the fix this raised ValueError; after, it must price normally.
+    """
+    params = get_security("Step-Down Barrier")
+    ac = from_security_dict(params, S_ref=S_REF)
+    sv = MCSurvivalPricer(
+        ac, sigma=SIGMA, r=0.0363, q=Q, n_paths=2000, seed=42,
+        vol_model="bates",
+        heston_params={"v0": 0.018, "kappa": 2.0, "theta": 0.001,
+                       "gamma": 0.064, "rho": -0.83},
+        jump_params={"lam": 0.32, "mu_J": -0.50, "sig_J": 0.28},
+    )
+    res = sv.price()  # raised ValueError before the fix
+    assert np.isfinite(res.price), f"price not finite: {res.price}"
+    assert res.price > 0, f"price non-positive: {res.price}"
