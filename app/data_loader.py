@@ -358,12 +358,12 @@ def load_calibration_cache(data_dir: str = DEFAULT_DATA_DIR) -> dict:
     Returns:
         Dict keyed by snapshot key, or {} if file does not exist yet.
     """
-    path = os.path.join(data_dir, "calibrations_cache.json")
-    # Also check processed dir when called with the raw dir (legacy call sites)
-    if not os.path.exists(path) and data_dir == RAW_DATA_DIR:
-        proc_path = os.path.join(PROCESSED_DATA_DIR, "calibrations_cache.json")
-        if os.path.exists(proc_path):
-            path = proc_path
+    # Processed cache is always authoritative; fall back to data_dir only if absent.
+    proc_path = os.path.join(PROCESSED_DATA_DIR, "calibrations_cache.json")
+    if os.path.exists(proc_path):
+        path = proc_path
+    else:
+        path = os.path.join(data_dir, "calibrations_cache.json")
     if not os.path.exists(path):
         return {}
     try:
