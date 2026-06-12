@@ -566,10 +566,27 @@ class VolSurface:
         # -- Step 1: Vectorised implied-vol lookup at all 4 stencil positions ----
         # RectBivariateSpline.ev(xi, yi) evaluates at pairs in C -- one Python call
         # for all nT*nM points replaces nT*nM individual implied_vol() calls.
-        iv_0T  = np.clip(self._spline.ev(m_flat,      t_flat     ), 0.02, 1.0)
-        iv_pT  = np.clip(self._spline.ev(m_flat + dK, t_flat     ), 0.02, 1.0)
-        iv_mT  = np.clip(self._spline.ev(m_flat - dK, t_flat     ), 0.02, 1.0)
-        iv_0dT = np.clip(self._spline.ev(m_flat,      t_flat + dT), 0.02, 1.0)
+        def _ev_clamped(m: np.ndarray, t: np.ndarray) -> np.ndarray:
+            """Evaluate the IV spline with inputs clamped to the knot domain.
+
+            WHY: pricers request this grid over moneyness 0.40-1.80 and t down
+            to 0.01, well outside the fitted knot range (moneyness 0.70-1.35,
+            TTM 0.08-3.0). FITPACK's bispeu happens to clamp out-of-domain
+            coordinates to the boundary internally, but that behaviour is
+            undocumented in scipy's API — relying on it is fragile. Clamping
+            explicitly guarantees flat boundary extension regardless of scipy
+            version, and mirrors the scalar implied_vol() and the SVI path's
+            _ev_svi(). Verified bit-identical to the unclamped evaluation on
+            scipy 1.13 across the full pricer stencil.
+            """
+            m_c = np.clip(m, self._moneyness_knots[0], self._moneyness_knots[-1])
+            t_c = np.clip(t, self._ttm_knots[0], self._ttm_knots[-1])
+            return np.clip(self._spline.ev(m_c, t_c), 0.02, 1.0)
+
+        iv_0T  = _ev_clamped(m_flat,      t_flat     )
+        iv_pT  = _ev_clamped(m_flat + dK, t_flat     )
+        iv_mT  = _ev_clamped(m_flat - dK, t_flat     )
+        iv_0dT = _ev_clamped(m_flat,      t_flat + dT)
 
         # -- Step 2: Vectorised Black-Scholes call prices ----------------------
         def _bs_vec(iv: np.ndarray, m: np.ndarray, t: np.ndarray) -> np.ndarray:

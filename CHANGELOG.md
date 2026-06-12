@@ -4,6 +4,24 @@ All notable changes to the AutoCallable Analytics Platform are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 Versioning follows [Semantic Versioning](https://semver.org/): patch (0.0.X) for bug fixes, minor (0.X.0) for new features, major (X.0.0) for architecture changes.
 
+## [0.6.9] — 2026-06-12
+
+### Changed
+
+- **`app/vol_surface.py` — `dupire_local_vol_grid()` now clamps spline inputs to the knot domain explicitly**
+  The vectorised Dupire grid called `RectBivariateSpline.ev()` without clamping
+  inputs to the knot domain (moneyness 0.70–1.35, TTM 0.08–3.0), while all three
+  pricers request the grid over moneyness 0.40–1.80 and t down to 0.01
+  (`mc_standard.py`, `mc_survival.py`, `pde_pricer.py`, `02_Pricer.py`).
+  Code review flagged this as out-of-domain cubic extrapolation feeding the
+  knock-in barrier region; empirical verification showed FITPACK's `bispeu`
+  in fact clamps out-of-domain coordinates to the boundary internally, so the
+  old code already produced flat boundary extension — but that behaviour is
+  undocumented in scipy's API and fragile across versions. Inputs are now
+  clamped explicitly (verified bit-identical to the old evaluation on scipy
+  1.13 across the full 4,000-point pricer stencil; 130/130 tests pass),
+  matching the scalar `implied_vol()` and the SVI path's `_ev_svi()`.
+
 ## [0.6.8] — 2026-06-11
 
 ### Added
