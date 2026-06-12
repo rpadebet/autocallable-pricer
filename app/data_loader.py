@@ -33,9 +33,11 @@ from typing import Optional
 # Constants
 # ---------------------------------------------------------------------------
 
-# Default data directory relative to the project root.
+# Directories relative to the project root.
 # Streamlit pages should pass an absolute path or rely on the CWD being correct.
-DEFAULT_DATA_DIR = "sample_data"
+RAW_DATA_DIR       = "sample_data"            # original yfinance CSVs
+PROCESSED_DATA_DIR = "sample_data/processed"  # after quality-filter pipeline
+DEFAULT_DATA_DIR   = PROCESSED_DATA_DIR       # app uses processed by default
 
 # Moneyness filter: remove very deep ITM (high delta, no vol info) and far OTM
 # (no market, unreliable quotes). This matches the filter in the Technical Spec.
@@ -61,7 +63,9 @@ def list_available_snapshots(data_dir: str = DEFAULT_DATA_DIR) -> list[dict]:
     looking at filenames.
 
     Args:
-        data_dir: Directory containing spx_options_YYYYMMDD_HHMM.csv files.
+        data_dir: Directory to search first.  If no processed snapshots exist
+                  there, the function falls back to RAW_DATA_DIR so the app
+                  still works before process_snapshots.py has been run.
 
     Returns:
         List of dicts, each with:
@@ -70,11 +74,16 @@ def list_available_snapshots(data_dir: str = DEFAULT_DATA_DIR) -> list[dict]:
         Sorted by timestamp, oldest first.
 
     Edge cases:
-        - Returns [] if data_dir doesn't exist or contains no matching files.
+        - Returns [] if neither processed nor raw dir contains matching files.
         - Files with malformed timestamps are included with key as label.
     """
     pattern = os.path.join(data_dir, "spx_options_*.csv")
-    files = sorted(glob.glob(pattern))  # lexicographic = time sort for YYYYMMDD_HHMM
+    files = sorted(glob.glob(pattern))
+
+    # Fall back to raw dir if processed dir is empty or doesn't exist yet
+    if not files and data_dir == PROCESSED_DATA_DIR:
+        pattern = os.path.join(RAW_DATA_DIR, "spx_options_*.csv")
+        files = sorted(glob.glob(pattern))
 
     results = []
     for f in files:
@@ -157,10 +166,15 @@ def load_snapshot(
           if needed, but useful for pricing that doesn't need IV).
     """
     path = os.path.join(data_dir, f"spx_options_{key}.csv")
+    # Fall back to raw directory if the processed file doesn't exist yet
+    if not os.path.exists(path) and data_dir == PROCESSED_DATA_DIR:
+        raw_path = os.path.join(RAW_DATA_DIR, f"spx_options_{key}.csv")
+        if os.path.exists(raw_path):
+            path = raw_path
     if not os.path.exists(path):
         raise FileNotFoundError(
             f"Snapshot not found: {path}\n"
-            f"Run scripts/generate_synthetic_data.py or scripts/collect_snapshot.py first."
+            f"Run scripts/process_snapshots.py to build the processed snapshot."
         )
 
     df = pd.read_csv(path, parse_dates=["expiry"])
@@ -345,6 +359,11 @@ def load_calibration_cache(data_dir: str = DEFAULT_DATA_DIR) -> dict:
         Dict keyed by snapshot key, or {} if file does not exist yet.
     """
     path = os.path.join(data_dir, "calibrations_cache.json")
+    # Also check processed dir when called with the raw dir (legacy call sites)
+    if not os.path.exists(path) and data_dir == RAW_DATA_DIR:
+        proc_path = os.path.join(PROCESSED_DATA_DIR, "calibrations_cache.json")
+        if os.path.exists(proc_path):
+            path = proc_path
     if not os.path.exists(path):
         return {}
     try:

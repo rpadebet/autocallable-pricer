@@ -4,6 +4,58 @@ All notable changes to the AutoCallable Analytics Platform are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 Versioning follows [Semantic Versioning](https://semver.org/): patch (0.0.X) for bug fixes, minor (0.X.0) for new features, major (X.0.0) for architecture changes.
 
+## [0.7.0] — 2026-06-12
+
+### Added
+
+- **`scripts/process_snapshots.py` — new options-data quality pipeline (5-filter)**
+  Builds `sample_data/processed/` from raw yfinance CSVs without touching the
+  originals.  Five filters applied in order:
+
+  1. **OTM-only selection** — keep OTM calls (K ≥ S × 0.99) and OTM puts
+     (K < S × 0.99).  ITM options are dominated by intrinsic value; their
+     bid-ask spread swamps the vol signal relative to their time value.
+  2. **Bid-ask spread quality** — drop options where (ask − bid) / mid > 30%.
+     A 30 % relative spread means ±15 % uncertainty in the mid-price.
+  3. **Volume > 0** — drop zero-volume / stale market-maker auto-quotes.
+  4. **Calendar-spread no-arbitrage** — for each strike, total implied variance
+     IV²·T must be non-decreasing in maturity.  Shorter-dated violating points
+     are dropped.
+  5. **Butterfly no-arbitrage** — for each (expiry, optionType) slice with ≥ 3
+     strikes, any interior strike whose IV exceeds the linear interpolation of
+     its neighbours by > 2 vol-pts is dropped.
+
+  Typical retention: ~42-49 % of bid-ask-filtered rows (OTM filter halves the
+  data by design; arb filters remove another 10-50 rows each).
+
+  Usage: `python scripts/process_snapshots.py [--force]`
+
+### Changed
+
+- **`app/data_loader.py` — processed snapshots used by default**
+  `DEFAULT_DATA_DIR` now points to `sample_data/processed/`.  All pages,
+  calibrations, and vol-surface fits run on the cleaned data.  If processed
+  files don't exist for a given key, `load_snapshot()` falls back to the raw
+  file so the app degrades gracefully before the pipeline has been run.
+
+- **`scripts/precalibrate.py` — calibrates against processed data; uses both calls and puts**
+  `DATA_DIR` and `CACHE_PATH` updated to `sample_data/processed/`.
+  The earlier `optionType == "call"` filter in `_calibrate_snapshot()` was
+  removed — processed snapshots already contain the optimal leg per strike
+  (OTM calls for K ≥ S, OTM puts for K < S), so the call-only restriction
+  was discarding half the information.
+
+- **`app/heston.py` — Bates Phase 2 adds a Heston-heavy starting point**
+  `calibrate_bates()` Phase 2 previously tried: (a) best-from-Phase-1,
+  (b) generic seed, (c) Merton-mimic (γ=0.02, θ=σ²_Merton).  The Merton-mimic
+  start reliably wins because it begins near the jump-dominated optimum and
+  L-BFGS-B never explores γ > 0.1 territory.  A fourth start is now added:
+  `[v0_H, κ_H, θ_H, 0.50, -0.70] + Merton-jumps` — Heston-calibrated
+  diffusion parameters with γ = 0.50 and the Merton-derived jump seed.
+  If a genuine Heston + moderate-jump blend beats the Merton-like solution,
+  the optimizer will find it; otherwise the Merton-like result is confirmed
+  as the honest best fit and Bates RMSE is unchanged.
+
 ## [0.6.10] — 2026-06-12
 
 ### Fixed

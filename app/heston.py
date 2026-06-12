@@ -1437,6 +1437,13 @@ def calibrate_bates(
              merton_init.get("mu_J", -0.08),
              merton_init.get("sig_J", 0.12)]
         )
+        # Heston-heavy seed: strong stochastic vol (gamma=0.50) with Merton jumps.
+        # Tests whether a genuine Heston+jump blend beats the Merton-like solution.
+        # Without this, the optimizer never visits the high-gamma region because
+        # both Phase-1 and the Merton-mimic seed start with gamma near the floor.
+        phase2_starts.append(
+            [_hv0, _hkappa, _htheta, 0.50, -0.70] + _seed_jump
+        )
     for sp in phase2_starts:
         spc = _clip(sp)
         v = objective(spc)

@@ -29,7 +29,9 @@ from app.data_loader import list_available_snapshots, load_snapshot, get_spot_pr
 from app.vol_surface import VolSurface
 from app.heston import HestonModel, calibrate_merton, calibrate_bates
 
-DATA_DIR   = os.path.join(ROOT, "sample_data")
+# Use processed snapshots so calibration runs on clean, arbitrage-free data.
+# Run scripts/process_snapshots.py first if sample_data/processed/ is missing.
+DATA_DIR   = os.path.join(ROOT, "sample_data", "processed")
 CACHE_PATH = os.path.join(DATA_DIR, "calibrations_cache.json")
 Q_SPX = 0.014  # SPX long-run dividend yield — not stored in snapshot files
 
@@ -55,12 +57,13 @@ def _calibrate_snapshot(snap_df, S0: float, r: float, q: float) -> dict:
     )
 
     # Step 2: Merton (independent of Heston — different model family)
+    # Use all processed options (OTM calls + OTM puts) — the processing pipeline
+    # has already selected the most informative leg for each strike.
     t2 = time.time()
-    mkt_calls = snap_df[snap_df["optionType"] == "call"].copy()
-    mkt_calls = mkt_calls.dropna(subset=["impliedVolatility"])
-    mkt_calls = mkt_calls[mkt_calls["impliedVolatility"] > 0]
+    mkt_options = snap_df.dropna(subset=["impliedVolatility"]).copy()
+    mkt_options = mkt_options[mkt_options["impliedVolatility"] > 0]
     try:
-        m = calibrate_merton(mkt_calls, S0=S0, r=r, q=q)
+        m = calibrate_merton(mkt_options, S0=S0, r=r, q=q)
         print(
             f"    Merton  {time.time()-t2:5.0f}s  "
             f"RMSE={m['rmse_vol_pts']:.2f}vol-pts  "
@@ -73,7 +76,7 @@ def _calibrate_snapshot(snap_df, S0: float, r: float, q: float) -> dict:
 
     # Step 3: Bates (warm-started from Heston diffusion + Merton jump params)
     t3 = time.time()
-    b  = calibrate_bates(mkt_calls, S0=S0, r=r, q=q, heston_init=h,
+    b  = calibrate_bates(mkt_options, S0=S0, r=r, q=q, heston_init=h,
                          merton_init=(m if m else None))
     print(
         f"    Bates   {time.time()-t3:5.0f}s  "
