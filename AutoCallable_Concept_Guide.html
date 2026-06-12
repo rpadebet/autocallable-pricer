@@ -103,7 +103,7 @@
 ══════════════════════════════════════════════════════ -->
 <div class="hero">
   <h1>AutoCallable Analytics Platform</h1>
-  <p class="subtitle">Concept Guide — What Every Feature Does, in Plain English &middot; v0.6.8</p>
+  <p class="subtitle">Concept Guide — What Every Feature Does, in Plain English &middot; v0.7.1</p>
   <div class="tags">
     <span class="tag">Structured Products</span>
     <span class="tag">Volatility Surfaces</span>
@@ -529,20 +529,20 @@
 <div class="card">
   <h3><span class="icon">⚡</span>Pre-Calibration Cache — "15 Minutes of Math, Done Once"</h3>
   <div class="analogy">
-    Instead of waiting 30-90 seconds every time you open the app to calibrate Heston, Merton, and Bates to market data, we pre-compute the calibration for all 11 snapshots once and save the results. The app loads them instantly — like having a pre-cooked meal ready in the fridge instead of cooking from scratch every time.
+    Instead of waiting 30-90 seconds every time you open the app to calibrate Heston, Merton, and Bates to market data, we pre-compute the calibration for all 13 snapshots once and save the results. The app loads them instantly — like having a pre-cooked meal ready in the fridge instead of cooking from scratch every time.
   </div>
   <div class="cols">
     <div>
       <div class="col-label">What's cached</div>
-      <div class="col-content">Heston (5 params), Merton (4 params), and Bates (8 params) for every snapshot date. Stored in <code>sample_data/calibrations_cache.json</code>. Total: 30 model fits across 11 market snapshots.</div>
+      <div class="col-content">Heston (5 params), Merton (4 params), and Bates (8 params) for every snapshot. Stored in <code>sample_data/processed/calibrations_cache.json</code>. Total: 39 model fits across 13 market snapshots, calibrated to quality-filtered OTM data.</div>
     </div>
     <div>
       <div class="col-label">How it works</div>
-      <div class="col-content">When you select a snapshot date in the sidebar, the app instantly injects the cached Heston/Merton/Bates parameters. The Vol Surface Calibrate tab shows them without any computation. Run <code>python scripts/precalibrate.py</code> to regenerate after code changes.</div>
+      <div class="col-content">Raw snapshots are first run through a 5-filter pipeline (OTM-only, spread cap, volume, calendar-spread no-arb, butterfly no-arb) into <code>sample_data/processed/</code>. The app instantly injects cached parameters when you select a snapshot — no waiting. Bates RMSE is 0.17–0.95 vol-pts across all snapshots. Run <code>python scripts/precalibrate.py</code> to regenerate.</div>
     </div>
     <div>
       <div class="col-label">SVI surface too</div>
-      <div class="col-content">The SVI Dupire surface is built on-demand (Tab 3) and cached for the session. Once built, switching between snapshots reuses the cached SVI parameters.</div>
+      <div class="col-content">The SVI Dupire surface is built on-demand (Tab 3) and cached for the session. Both Dupire methods (cubic spline and SVI) use the processed OTM data automatically, giving a cleaner local vol surface with fewer arbitrage artifacts.</div>
     </div>
   </div>
 </div>
@@ -661,7 +661,7 @@
 </div>
 
 <div class="footer">
-  AutoCallable Analytics Platform · Concept Guide · v0.5.16 · June 2026
+  AutoCallable Analytics Platform · Concept Guide · v0.7.1 · June 2026
   <br>A learning and demonstration tool for autocallable structured product pricing
 </div>
 

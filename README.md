@@ -2,7 +2,7 @@
 
 A pricing and analytics platform for autocallable structured products, built as a technical demonstration.
 
-**Version**: v0.6.8 &middot; **Tests**: 130/130 passing &middot; **Live demo**: [https://autocallable-pricer-nk7zy5ayx9amw77jrnxkau.streamlit.app](https://autocallable-pricer-nk7zy5ayx9amw77jrnxkau.streamlit.app)
+**Version**: v0.7.1 &middot; **Tests**: 130/130 passing &middot; **Live demo**: [https://autocallable-pricer-nk7zy5ayx9amw77jrnxkau.streamlit.app](https://autocallable-pricer-nk7zy5ayx9amw77jrnxkau.streamlit.app)
 
 ---
 
@@ -30,7 +30,7 @@ The math comes from three papers (in the `docs/` folder):
 Loads a pre-collected SPX options snapshot, filters bad ticks, computes Black-Scholes implied vols for each (K, T) pair, and displays an interactive 3D surface. Fits a bicubic spline for smooth interpolation. Three tabs:
 
 - **Build Surface** — 3D implied vol surface + ATM term structure
-- **Calibrate Models** — one-click Heston (5 params), Merton (4 params), and Bates (8 params) calibration to the market surface, with side-by-side fit quality comparison. Pre-computed calibration cache (`sample_data/calibrations_cache.json`) loads instantly for all snapshots.
+- **Calibrate Models** — one-click Heston (5 params), Merton (4 params), and Bates (8 params) calibration to the market surface, with side-by-side fit quality comparison. Pre-computed calibration cache (`sample_data/processed/calibrations_cache.json`) loads instantly for all snapshots.
 - **Dupire Vol Surface** — Cubic-spline and SVI-parametric local vol surfaces, with CSV download.
 
 ### 2 · Pricer *(start here)*
@@ -67,9 +67,11 @@ Custom autocallable designer. Define structure type (Phoenix / Step-Down / Digit
 
 ## Market Data
 
-The app uses **pre-collected static snapshots** of SPX options chains (in `sample_data/`). 11 snapshots covering Jun 6–11, with Market Open, Midday, and Near Close sessions each day. There are no live API calls at runtime — pre-collecting snapshots makes the demo reliable and reproducible.
+The app uses **pre-collected static snapshots** of SPX options chains (in `sample_data/`). 13 snapshots covering Jun 6–11, with Market Open, Midday, and Near Close sessions each day. There are no live API calls at runtime.
 
-A **pre-computed calibration cache** (`sample_data/calibrations_cache.json`) stores Heston, Merton, and Bates parameters for every snapshot. Run `python scripts/precalibrate.py` to regenerate it after code changes.
+Snapshots are run through a **5-filter quality pipeline** (`scripts/process_snapshots.py`) before calibration: OTM-only selection, bid-ask spread cap (30%), volume filter, calendar-spread no-arbitrage, and butterfly no-arbitrage. Cleaned snapshots land in `sample_data/processed/`.
+
+A **pre-computed calibration cache** (`sample_data/processed/calibrations_cache.json`) stores Heston, Merton, and Bates parameters for all 13 snapshots, calibrated to processed OTM data. Regenerate with `python scripts/precalibrate.py`.
 
 ---
 
@@ -111,9 +113,11 @@ autocallable-pricer/
 │   ├── heston.py                  # Heston model + calibration
 │   ├── vol_surface.py             # Implied vol + Dupire local vol
 │   └── data_loader.py             # Snapshot loader
-├── sample_data/                   # 11 SPX options snapshots + pre-calibration cache
+├── sample_data/                   # 13 SPX options snapshots
+│   └── processed/                 # Quality-filtered OTM data + calibrations_cache.json
 ├── scripts/
 │   ├── collect_snapshot.py        # Run during market hours to add snapshots
+│   ├── process_snapshots.py       # 5-filter quality pipeline → sample_data/processed/
 │   └── precalibrate.py            # Offline Heston/Merton/Bates calibration for all snapshots
 ├── tests/                         # 130 unit tests (pytest)
 └── requirements.txt
