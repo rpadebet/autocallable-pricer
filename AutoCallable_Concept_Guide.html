@@ -103,7 +103,7 @@
 ══════════════════════════════════════════════════════ -->
 <div class="hero">
   <h1>AutoCallable Analytics Platform</h1>
-  <p class="subtitle">Concept Guide — What Every Feature Does, in Plain English</p>
+  <p class="subtitle">Concept Guide — What Every Feature Does, in Plain English &middot; v0.6.8</p>
   <div class="tags">
     <span class="tag">Structured Products</span>
     <span class="tag">Volatility Surfaces</span>
@@ -112,6 +112,8 @@
     <span class="tag">Variance Reduction</span>
     <span class="tag">Options Greeks</span>
     <span class="tag">Heston / Bates / Merton Models</span>
+    <span class="tag">SVI Local Vol</span>
+    <span class="tag">Pre-Calibrated</span>
   </div>
 </div>
 
@@ -325,7 +327,7 @@
     </div>
     <div>
       <div class="col-label">How it's computed</div>
-      <div class="col-content">Uses Dupire's formula on a smooth interpolation of the implied vol surface. The app builds a 40×25 grid of σ(S,t) values at trade, then uses fast interpolation during simulation so the pricer doesn't slow down.</div>
+      <div class="col-content">Two methods: <strong>Cubic-Spline Dupire</strong> differentiates a bicubic spline fitted directly to raw option prices — produces an "honest but jagged" surface showing interpolation artifacts. <strong>SVI Dupire</strong> first fits a parametric SVI (Stochastic Volatility Inspired) model per expiration slice, denoising quotes before applying Dupire — produces a smoother, more usable surface. Both are available in the Vol Surface page Tab 3, with CSV download.</div>
     </div>
     <div>
       <div class="col-label">Try it</div>
@@ -517,10 +519,39 @@
 </div>
 
 <!-- ══════════════════════════════════════════════════════
-     PART 5 — DEMO WALKTHROUGH
+     PART 5 — PRE-CALIBRATION CACHE
+══════════════════════════════════════════════════════ -->
+<div class="part-header theme-vol">
+  <div class="part-num bg-vol">5</div>
+  <h2>Pre-Calibrated Models — Instant Startup</h2>
+</div>
+
+<div class="card">
+  <h3><span class="icon">⚡</span>Pre-Calibration Cache — "15 Minutes of Math, Done Once"</h3>
+  <div class="analogy">
+    Instead of waiting 30-90 seconds every time you open the app to calibrate Heston, Merton, and Bates to market data, we pre-compute the calibration for all 11 snapshots once and save the results. The app loads them instantly — like having a pre-cooked meal ready in the fridge instead of cooking from scratch every time.
+  </div>
+  <div class="cols">
+    <div>
+      <div class="col-label">What's cached</div>
+      <div class="col-content">Heston (5 params), Merton (4 params), and Bates (8 params) for every snapshot date. Stored in <code>sample_data/calibrations_cache.json</code>. Total: 30 model fits across 11 market snapshots.</div>
+    </div>
+    <div>
+      <div class="col-label">How it works</div>
+      <div class="col-content">When you select a snapshot date in the sidebar, the app instantly injects the cached Heston/Merton/Bates parameters. The Vol Surface Calibrate tab shows them without any computation. Run <code>python scripts/precalibrate.py</code> to regenerate after code changes.</div>
+    </div>
+    <div>
+      <div class="col-label">SVI surface too</div>
+      <div class="col-content">The SVI Dupire surface is built on-demand (Tab 3) and cached for the session. Once built, switching between snapshots reuses the cached SVI parameters.</div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════
+     PART 6 — DEMO WALKTHROUGH
 ══════════════════════════════════════════════════════ -->
 <div class="part-header theme-demo">
-  <div class="part-num bg-demo">5</div>
+  <div class="part-num bg-demo">6</div>
   <h2>Demo Walkthrough — How to Show Each Concept</h2>
 </div>
 
@@ -563,15 +594,15 @@
     <div class="step-num">5</div>
     <div class="step-body">
       <strong>Vol Surface → Market data and calibration</strong>
-      Go to Vol Surface. Show the 3D implied vol surface from real SPX data. Click "Calibrate Heston" — the Heston overlay shows how well the model fits. Then go to Model Comparison and run all three models. Compare RMSE. Explain: Bates fits better but at the cost of 8 parameters.
+      Go to Vol Surface. Show the 3D implied vol surface from real SPX data. The Calibrate tab instantly shows pre-computed Heston, Merton, and Bates parameters for the selected snapshot — no waiting. Toggle between models to compare RMSE. Switch to the Dupire tab and compare Cubic-Spline vs SVI local vol surfaces side by side.
     </div>
   </div>
 
   <div class="step">
     <div class="step-num">6</div>
     <div class="step-body">
-      <strong>Sidebar → Change vol model to Heston</strong>
-      In the sidebar, switch Volatility Model to "Heston." Go back to Pricer and rerun. The FD pricer falls back to flat vol, but the MC pricers now use the full Heston variance SDE. Compare the Heston price to the flat vol price — the difference shows the vol model matters.
+      <strong>Pricer → Change vol model to Heston or Bates</strong>
+      Use the vol model selector at the top of the Pricer page (also on FDM Visualization). Switch to "Heston" and rerun — the FD pricer falls back to flat vol, but the MC pricers use the full Heston variance SDE with pre-calibrated parameters. Switch to "Bates" to add Merton jumps. Compare prices and RMSE across models.
     </div>
   </div>
 
