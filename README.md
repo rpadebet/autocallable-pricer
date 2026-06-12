@@ -2,7 +2,7 @@
 
 A pricing and analytics platform for autocallable structured products, built as a technical demonstration.
 
-**Live demo**: [https://autocallable-pricer-nk7zy5ayx9amw77jrnxkau.streamlit.app](https://autocallable-pricer-nk7zy5ayx9amw77jrnxkau.streamlit.app)
+**Version**: v0.6.8 &middot; **Tests**: 130/130 passing &middot; **Live demo**: [https://autocallable-pricer-nk7zy5ayx9amw77jrnxkau.streamlit.app](https://autocallable-pricer-nk7zy5ayx9amw77jrnxkau.streamlit.app)
 
 ---
 
@@ -27,23 +27,27 @@ The math comes from three papers (in the `docs/` folder):
 ## App Pages
 
 ### 1 · Vol Surface
-Loads a pre-collected SPX options snapshot, filters bad ticks, computes Black-Scholes implied vols for each (K, T) pair, and displays an interactive 3D surface. Overlays the calibrated Heston model surface to show fit quality. Computes the Dupire local vol surface side-by-side.
+Loads a pre-collected SPX options snapshot, filters bad ticks, computes Black-Scholes implied vols for each (K, T) pair, and displays an interactive 3D surface. Fits a bicubic spline for smooth interpolation. Three tabs:
+
+- **Build Surface** — 3D implied vol surface + ATM term structure
+- **Calibrate Models** — one-click Heston (5 params), Merton (4 params), and Bates (8 params) calibration to the market surface, with side-by-side fit quality comparison. Pre-computed calibration cache (`sample_data/calibrations_cache.json`) loads instantly for all snapshots.
+- **Dupire Vol Surface** — Cubic-spline and SVI-parametric local vol surfaces, with CSV download.
 
 ### 2 · Pricer *(start here)*
-The centerpiece. Select from four pre-configured autocallable structures and price using all three methods simultaneously:
+The centerpiece. Select from four pre-configured autocallable structures and price using all three methods simultaneously. **Vol model selector** supports Flat (Black-Scholes), Local Vol (Dupire), Heston stochastic vol, and Bates (Heston + Merton jumps). Methods:
 
-- **FD/PDE** — explicit finite difference on the log-transformed heat equation (Paper 1 §2.2). Outputs call probability at each observation date.
-- **Standard MC** — GBM simulation with antithetic variates. Animated path chart shows how individual trajectories interact with the call and protection barriers.
-- **One-Step Survival MC** — no path ever crosses the barrier stochastically; crossings handled via truncated normal sampling. Convergence chart shows tighter confidence intervals at the same path count.
+- **FD/PDE** — explicit FD on the log-transformed heat equation (Paper 1 §2.2), with Crank-Nicolson option. Supports flat and local vol (Dupire). Outputs call probability at each observation date.
+- **Standard MC** — GBM/Heston/Bates simulation with antithetic variates. Animated path chart shows how individual trajectories interact with the call and protection barriers. Per-observation conditional coupons and terminal-only knock-in reflect the actual product terms.
+- **One-Step Survival MC** — no path ever crosses the barrier stochastically; crossings handled via truncated normal sampling (Paper 3 Algorithm 1). Convergence chart shows tighter confidence intervals at the same path count. Methodology notes explain known limitations under local vol and Bates.
 
 ### 3 · FDM Visualization
-Makes the finite difference algorithm visible. Heatmap of V(S, t) backward from maturity, 3D value surface with autocall boundary, time-slice animation stepping backward from T → 0. **Scheme Comparison tab** shows Explicit FD vs Crank-Nicolson side by side: price convergence as grid size increases, stability (CN accepts coarse time steps; explicit auto-corrects via CFL), and per-call timing.
+Makes the finite difference algorithm visible. Heatmap of V(S, t) backward from maturity, 3D value surface with autocall boundary, time-slice animation stepping backward from T → 0. **Vol model selector** supports Flat and Local Vol (same as Pricer page). **Scheme Comparison tab** shows Explicit FD vs Crank-Nicolson side by side: price convergence vs grid size, stability (CN accepts coarse time steps; explicit auto-corrects via CFL).
 
 ### 4 · Greeks
 Demonstrates the key practical result of Paper 3. Standard MC Delta is noisy and can change sign across random seeds at small bump sizes. Survival MC Delta is stable across all bump sizes and seeds — because the payoff is a smooth function of S₀ by construction (no path stochastically crosses the barrier). Side-by-side plots at 10 bump sizes × 8 seeds make this impossible to miss.
 
 ### 5 · Scenarios
-Payoff diagram at maturity — highlights the knock-in risk zone, the capital-return floor, and the autocall payoff level. What-if sliders for spot, vol, and rates update the price live. Historical SPX path overlay shows what would have happened with actual market data. Call probability table by observation date.
+Payoff diagram at maturity — highlights the knock-in risk zone, the capital-return floor, and the autocall payoff level. What-if sliders for spot, vol, and rates update the price live. Call probability table by observation date with barrier-level overlay showing step-down dynamics for declining barriers.
 
 ### 6 · Product Builder
 Custom autocallable designer. Define structure type (Phoenix / Step-Down / Digital), set barriers, maturity, coupon, and notional. Live payoff diagram and metrics update instantly. Save the product to the sidebar dropdown to price it immediately with all three methods.
@@ -63,7 +67,9 @@ Custom autocallable designer. Define structure type (Phoenix / Step-Down / Digit
 
 ## Market Data
 
-The app uses **pre-collected static snapshots** of SPX options chains (in `sample_data/`). There are no live API calls at runtime — this makes every run reproducible and eliminates demo failures. Snapshots were collected via `scripts/collect_snapshot.py` using yfinance during market hours.
+The app uses **pre-collected static snapshots** of SPX options chains (in `sample_data/`). 11 snapshots covering Jun 6–11, with Market Open, Midday, and Near Close sessions each day. There are no live API calls at runtime — pre-collecting snapshots makes the demo reliable and reproducible.
+
+A **pre-computed calibration cache** (`sample_data/calibrations_cache.json`) stores Heston, Merton, and Bates parameters for every snapshot. Run `python scripts/precalibrate.py` to regenerate it after code changes.
 
 ---
 
@@ -105,9 +111,11 @@ autocallable-pricer/
 │   ├── heston.py                  # Heston model + calibration
 │   ├── vol_surface.py             # Implied vol + Dupire local vol
 │   └── data_loader.py             # Snapshot loader
-├── sample_data/                   # Pre-collected SPX options CSVs
-├── scripts/collect_snapshot.py    # Run during market hours to add snapshots
-├── tests/                         # 74 unit tests (pytest)
+├── sample_data/                   # 11 SPX options snapshots + pre-calibration cache
+├── scripts/
+│   ├── collect_snapshot.py        # Run during market hours to add snapshots
+│   └── precalibrate.py            # Offline Heston/Merton/Bates calibration for all snapshots
+├── tests/                         # 130 unit tests (pytest)
 └── requirements.txt
 ```
 
@@ -119,7 +127,7 @@ autocallable-pricer/
 python -m pytest tests/ -v
 ```
 
-74 tests covering: FD prices vs Paper 1 Table 1, MC convergence, Heston characteristic function (branch-cut safety), payoff logic for all four product structures, variance reduction proof (Survival MC SE < Standard MC SE at same N), Crank-Nicolson scheme correctness (Thomas algorithm, unconditional stability, convergence to explicit at fine grids). (`test_heston.py` skipped in sandbox due to OneDrive FUSE sync — passes on local machine.)
+130 tests covering: FD prices vs MC convergence, Heston + Bates characteristic functions (branch-cut safety, Merton nest), payoff logic for all four product structures including per-observation coupons, variance reduction proof (Survival MC SE < Standard MC SE at same N), Crank-Nicolson scheme correctness, local vol FDM, Merton series convergence, SVI Dupire surface, and step-down barrier mechanics. (`test_heston.py` skipped in sandbox due to OneDrive FUSE sync — passes on local machine.)
 
 ---
 
